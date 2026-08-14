@@ -13,6 +13,15 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
+function formatToken(t) {
+  if (!t) return '';
+  const trimmed = String(t).trim();
+  if (!trimmed.startsWith('Bot ') && !trimmed.startsWith('Bearer ')) {
+    return `Bot ${trimmed}`;
+  }
+  return trimmed;
+}
+
 // Fila in-memory por guildId
 const queues = new Map();
 
@@ -77,7 +86,7 @@ async function processQueue(guildId) {
 function enqueue(guildId, token, endpoint, body) {
   return new Promise((resolve, reject) => {
     const q = getQueue(guildId);
-    q.pending.push({ token, endpoint, body, resolve, reject });
+    q.pending.push({ token: formatToken(token), endpoint, body, resolve, reject });
     processQueue(guildId);
   });
 }
@@ -87,8 +96,9 @@ app.post('/api/auth', async (req, res) => {
   const { token } = req.body || {};
   if (!token) return res.status(400).json({ error: 'Token required' });
   try {
+    const formattedToken = formatToken(token);
     const r = await fetch('https://discord.com/api/v10/users/@me', {
-      headers: { Authorization: token },
+      headers: { Authorization: formattedToken },
     });
     const data = await r.json();
     res.status(r.ok ? 200 : 401).json(data);
