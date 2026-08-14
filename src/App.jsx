@@ -11,20 +11,18 @@ export default function App() {
     e.preventDefault();
     setLoading(true);
     setError('');
-
     try {
       const res = await fetch('/api/auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: token.trim() })
+        body: JSON.stringify({ token: token.trim() }),
       });
-
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `Erro da API ${res.status}`);
+      const data = await res.json();
+      if (data.id) {
+        setStep('dashboard');
+      } else {
+        throw new Error(data.message || 'Token inválido');
       }
-
-      setStep('dashboard');
     } catch (err) {
       setError(err.message || 'Falha na conexão');
     } finally {
@@ -32,19 +30,49 @@ export default function App() {
     }
   }
 
-  const handleBatchAction = async (endpoint, payload) => {
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: token.trim(), guildId: guildId.trim(), ...payload })
-      });
-      const data = await res.json();
-      alert(data.message || 'Comando enviado para a fila!');
-    } catch (err) {
-      alert('Erro ao enviar comando: ' + err.message);
-    }
-  };
+  async function batchInvites() {
+    const res = await fetch('/api/batch/invites', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token,
+        guildId,
+        channels: ['123456789012345678', '123456789012345679'], // substitua pelos IDs reais
+        maxAge: 0,
+        maxUses: 0,
+      }),
+    });
+    const out = await res.json();
+    alert(JSON.stringify(out));
+  }
+
+  async function batchRoles() {
+    const res = await fetch('/api/batch/roles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token,
+        guildId,
+        roles: [{ name: 'Novo Cargo', color: 0 }]
+      }),
+    });
+    const out = await res.json();
+    alert(JSON.stringify(out));
+  }
+
+  async function batchChannels() {
+    const res = await fetch('/api/batch/channels', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token,
+        guildId,
+        channels: [{ name: 'novo-canal', type: 0 }]
+      }),
+    });
+    const out = await res.json();
+    alert(JSON.stringify(out));
+  }
 
   if (step === 'dashboard') {
     return (
@@ -66,19 +94,19 @@ export default function App() {
               <div className="flex flex-wrap gap-3">
                 <button
                   className="px-4 py-2 bg-cyan-500 hover:bg-cyan-600 text-white rounded-md text-sm font-medium transition-colors"
-                  onClick={() => handleBatchAction('/api/batch/invites', { channels: ['ID_DO_CANAL_EXEMPLO'] })}
+                  onClick={batchInvites}
                 >
                   Criar convites
                 </button>
                 <button
                   className="px-4 py-2 bg-cyan-500 hover:bg-cyan-600 text-white rounded-md text-sm font-medium transition-colors"
-                  onClick={() => handleBatchAction('/api/batch/roles', { roles: [{ name: 'Novo Cargo', color: 0 }] })}
+                  onClick={batchRoles}
                 >
                   Criar cargos
                 </button>
                 <button
                   className="px-4 py-2 bg-cyan-500 hover:bg-cyan-600 text-white rounded-md text-sm font-medium transition-colors"
-                  onClick={() => handleBatchAction('/api/batch/channels', { channels: [{ name: 'novo-canal', type: 0 }] })}
+                  onClick={batchChannels}
                 >
                   Criar canais
                 </button>

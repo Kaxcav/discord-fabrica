@@ -1,143 +1,161 @@
-import express from 'express';
-import cors from 'cors';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const express = require('express');
+const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
-// Queue worker for rate-limited requests
-const queue = [];
-let isProcessing = false;
+// Fila in-memory por guildId
+const queues = new Map();
 
-const processQueue = async () => {
-  if (isProcessing || queue.length === 0) return;
-  isProcessing = true;
-
-  const { execute, resolve, reject, retryCount = 0 } = queue[0];
-
-  try {
-    const result = await execute();
-    resolve(result);
-    queue.shift(); // Remove on success
-    
-    // Default delay to avoid hitting limits
-    setTimeout(() => {
-      isProcessing = false;
-      processQueue();
-    }, 1500);
-  } catch (error) {
-    if (error.status === 429 && retryCount < 3) {
-      const retryAfter = error.retryAfter ? (error.retryAfter * 1000) : 5000;
-      console.log(`Rate limited! Retrying after ${retryAfter}ms`);
-      queue[0].retryCount = retryCount + 1;
-      
-      setTimeout(() => {
-        isProcessing = false;
-        processQueue();
-      }, retryAfter);
-    } else {
-      reject(error);
-      queue.shift();
-      isProcessing = false;
-      processQueue();
-    }
+function getQueue(guildId) {
+  if (!queues.has(guildId)) {
+    queues.set(guildId, { pending: [], processing: false });
   }
-};
+  return queues.get(guildId);
+}
 
-const enqueueRequest = (execute) => {
+async function delay(ms) {
+  return new Promise((res) => setTimeout(res, ms));
+}
+
+async function processQueue(guildId) {
+  const q = getQueue(guildId);
+  if (q.processing || q.pending.length === 0) return;
+  q.processing = true;
+
+  while (q.pending.length > 0) {
+    const job = q.pending.shift();
+    const { token, endpoint, body, resolve, reject } = job;
+    const url = `https://discord.com/api/v10${endpoint}`;
+
+    const doRequest = async (retryAfter = 0) => {
+      if (retryAfter > 0) await delay(retryAfter * 1000);
+      else await delay(1000 + Math.random() * 1000); // 1–2 s entre ações
+
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            Authorization: token,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        });
+
+        if (res.status === 429) {
+          const data = await res.json().catch(() => ({}));
+          const wait = (data.retry_after || 5) + Math.random() * 2;
+          q.pending.unshift(job); // reenfileira para tentar de novo
+          await delay(wait * 1000);
+          return;
+        }
+
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) resolve(data);
+        else reject(new Error(data.message || `Discord ${res.status}`));
+      } catch (err) {
+        reject(err);
+      }
+    };
+
+    await doRequest().catch(reject);
+    await delay(500); // pequeno respiro entre inícios de jobs
+  }
+
+  q.processing = false;
+}
+
+function enqueue(guildId, token, endpoint, body) {
   return new Promise((resolve, reject) => {
-    queue.push({ execute, resolve, reject, retryCount: 0 });
-    processQueue();
+    const q = getQueue(guildId);
+    q.pending.push({ token, endpoint, body, resolve, reject });
+    processQueue(guildId);
   });
-};
+}
 
-const fetchDiscord = async (url, method, token, body = null) => {
-  const options = {
-    method,
-    headers: {
-      Authorization: token.trim(),
-      'Content-Type': 'application/json'
-    }
-  };
-  if (body) options.body = JSON.stringify(body);
-
-  const res = await fetch(`https://discord.com/api/v10${url}`, options);
-  
-  if (!res.ok) {
-    const errorBody = await res.json().catch(() => ({}));
-    const err = new Error(errorBody.message || `Discord API ${res.status}`);
-    err.status = res.status;
-    if (res.status === 429) {
-      err.retryAfter = errorBody.retry_after;
-    }
-    throw err;
-  }
-  
-  return res.status === 204 ? null : res.json();
-};
-
-// API Routes
+// Auth
 app.post('/api/auth', async (req, res) => {
+  const { token } = req.body || {};
+  if (!token) return res.status(400).json({ error: 'Token required' });
   try {
-    const { token } = req.body;
-    if (!token) return res.status(400).json({ error: 'Token missing' });
-    
-    const user = await fetchDiscord('/users/@me', 'GET', token);
-    res.json(user);
+    const r = await fetch('https://discord.com/api/v10/users/@me', {
+      headers: { Authorization: token },
+    });
+    const data = await r.json();
+    res.status(r.ok ? 200 : 401).json(data);
   } catch (err) {
-    res.status(err.status || 500).json({ error: err.message });
+    res.status(500).json({ error: String(err) });
   }
 });
 
+// Batch endpoints
 app.post('/api/batch/invites', async (req, res) => {
-  const { token, guildId, channels } = req.body;
-  if (!channels || channels.length === 0) return res.json({ success: true, count: 0 });
-  
-  res.json({ message: 'Processamento de convites iniciado em background' });
-  
-  for (const channelId of channels) {
-    enqueueRequest(() => fetchDiscord(`/channels/${channelId}/invites`, 'POST', token, {
-      max_age: 0,
-      max_uses: 0
-    })).catch(console.error);
+  const { token, guildId, channels = [], maxAge = 0, maxUses = 0 } = req.body || {};
+  if (!token || !guildId || !channels.length) {
+    return res.status(400).json({ error: 'token, guildId, channels required' });
   }
+  const promises = channels.map((ch) =>
+    enqueue(guildId, token, `/channels/${ch}/invites`, {
+      max_age: maxAge,
+      max_uses: maxUses,
+      temporary: false,
+      unique: true,
+    })
+  );
+  // Send initial response instead of waiting for all (avoids timeout & double res.json)
+  res.json({ queued: channels.length, message: 'Processamento em background iniciado' });
 });
 
 app.post('/api/batch/roles', async (req, res) => {
-  const { token, guildId, roles } = req.body;
-  if (!roles || roles.length === 0) return res.json({ success: true, count: 0 });
-  
-  res.json({ message: 'Processamento de cargos iniciado em background' });
-  
-  for (const role of roles) {
-    enqueueRequest(() => fetchDiscord(`/guilds/${guildId}/roles`, 'POST', token, role)).catch(console.error);
+  const { token, guildId, roles = [] } = req.body || {};
+  if (!token || !guildId || !roles.length) {
+    return res.status(400).json({ error: 'token, guildId, roles required' });
   }
+  const promises = roles.map((r) =>
+    enqueue(guildId, token, `/guilds/${guildId}/roles`, {
+      name: r.name || 'new role',
+      permissions: r.permissions || '0',
+      color: r.color || 0,
+      hoist: !!r.hoist,
+      mentionable: !!r.mentionable,
+    })
+  );
+  res.json({ queued: roles.length, message: 'Processamento em background iniciado' });
 });
 
 app.post('/api/batch/channels', async (req, res) => {
-  const { token, guildId, channels } = req.body;
-  if (!channels || channels.length === 0) return res.json({ success: true, count: 0 });
-  
-  res.json({ message: 'Processamento de canais iniciado em background' });
-  
-  for (const channel of channels) {
-    enqueueRequest(() => fetchDiscord(`/guilds/${guildId}/channels`, 'POST', token, channel)).catch(console.error);
+  const { token, guildId, channels = [] } = req.body || {};
+  if (!token || !guildId || !channels.length) {
+    return res.status(400).json({ error: 'token, guildId, channels required' });
   }
+  const promises = channels.map((ch) =>
+    enqueue(guildId, token, `/guilds/${guildId}/channels`, {
+      name: ch.name,
+      type: ch.type || 0,
+      topic: ch.topic || '',
+      bitrate: ch.bitrate || 64000,
+      user_limit: ch.user_limit || 0,
+      nsfw: !!ch.nsfw,
+      parent_id: ch.parent_id || null,
+    })
+  );
+  res.json({ queued: channels.length, message: 'Processamento em background iniciado' });
 });
 
-// Serve React static files
-app.use(express.static(path.join(__dirname, 'dist')));
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
-});
+// Serve React build
+const distPath = path.join(__dirname, 'dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+}
 
 app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
