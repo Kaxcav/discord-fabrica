@@ -13,18 +13,17 @@ export default function App() {
     setError('');
 
     try {
-      const res = await fetch('https://discord.com/api/v10/users/@me', {
-        headers: { Authorization: token.trim() },
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: token.trim() })
       });
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.message || `Discord API ${res.status}`);
+        throw new Error(body.error || `Erro da API ${res.status}`);
       }
 
-      const user = await res.json();
-      // Validação simples de guilda via presença no objeto do usuário (opcional)
-      // Para este fluxo, consideramos sucesso e avançamos para o dashboard.
       setStep('dashboard');
     } catch (err) {
       setError(err.message || 'Falha na conexão');
@@ -32,6 +31,20 @@ export default function App() {
       setLoading(false);
     }
   }
+
+  const handleBatchAction = async (endpoint, payload) => {
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: token.trim(), guildId: guildId.trim(), ...payload })
+      });
+      const data = await res.json();
+      alert(data.message || 'Comando enviado para a fila!');
+    } catch (err) {
+      alert('Erro ao enviar comando: ' + err.message);
+    }
+  };
 
   if (step === 'dashboard') {
     return (
@@ -53,19 +66,19 @@ export default function App() {
               <div className="flex flex-wrap gap-3">
                 <button
                   className="px-4 py-2 bg-cyan-500 hover:bg-cyan-600 text-white rounded-md text-sm font-medium transition-colors"
-                  onClick={() => alert('Ação: criar convites em lote (implementar endpoint /routes.js)')}
+                  onClick={() => handleBatchAction('/api/batch/invites', { channels: ['ID_DO_CANAL_EXEMPLO'] })}
                 >
                   Criar convites
                 </button>
                 <button
                   className="px-4 py-2 bg-cyan-500 hover:bg-cyan-600 text-white rounded-md text-sm font-medium transition-colors"
-                  onClick={() => alert('Ação: criar cargos em lote (implementar endpoint /routes.js)')}
+                  onClick={() => handleBatchAction('/api/batch/roles', { roles: [{ name: 'Novo Cargo', color: 0 }] })}
                 >
                   Criar cargos
                 </button>
                 <button
                   className="px-4 py-2 bg-cyan-500 hover:bg-cyan-600 text-white rounded-md text-sm font-medium transition-colors"
-                  onClick={() => alert('Ação: criar canais em lote (implementar endpoint /routes.js)')}
+                  onClick={() => handleBatchAction('/api/batch/channels', { channels: [{ name: 'novo-canal', type: 0 }] })}
                 >
                   Criar canais
                 </button>
