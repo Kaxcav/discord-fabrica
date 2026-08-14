@@ -15,11 +15,10 @@ app.use(express.json({ limit: '1mb' }));
 
 function formatToken(t) {
   if (!t) return '';
-  const trimmed = String(t).trim();
-  if (!trimmed.startsWith('Bot ') && !trimmed.startsWith('Bearer ')) {
-    return `Bot ${trimmed}`;
-  }
-  return trimmed;
+  // Vamos retornar o token exatamente como foi enviado,
+  // permitindo que tanto tokens de usuário (sem prefixo)
+  // quanto tokens de bot (onde o usuário digita "Bot " antes) funcionem.
+  return String(t).trim();
 }
 
 // Fila in-memory por guildId
