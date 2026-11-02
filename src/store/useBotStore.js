@@ -145,7 +145,10 @@ export const useBotStore = create((set, get) => ({
   setCopiedText: (val) => set({ copiedText: val }),
   setLimparDmTarget: (val) => set({ limparDmTarget: val }),
   setLimparDmDelay: (val) => set({ limparDmDelay: val }),
-  setLimparDmTask: (val) => set({ limparDmTask: val }),
+  setLimparDmTask: (val) =>
+    typeof val === 'function'
+      ? set((state) => ({ limparDmTask: val(state.limparDmTask) }))
+      : set({ limparDmTask: val }),
 
   // Setters operacionais
   setManualGuildId: (val) => set({ manualGuildId: val }),

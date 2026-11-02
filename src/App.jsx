@@ -121,6 +121,7 @@ export default function App() {
     es.addEventListener('task_progress', (e) => {
       try {
         const d = JSON.parse(e.data);
+        if (!d.taskId?.startsWith('limpar-dm-')) return;
         setLimparDmTask((prev) => ({ ...prev, ...d }));
       } catch {}
     });
