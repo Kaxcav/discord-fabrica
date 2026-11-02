@@ -116,7 +116,7 @@ async function discordRequest(token, method, endpoint, body = undefined, retries
   return { ok: false, status: 429, data: null, error: 'Rate limit excedido após retentativas' };
 }
 
-class SelfbotEngine {
+export class SelfbotEngine {
   constructor() {
     this.token = '';
     this.ws = null;
@@ -1926,9 +1926,79 @@ class SelfbotEngine {
       logs: this.logs.slice(0, 120),
     };
   }
+
+  destroy() {
+    this.closeIpc();
+    for (const res of this.sseClients) {
+      try {
+        if (typeof res.end === 'function') res.end();
+      } catch {}
+    }
+    this.sseClients.clear();
+    this.disconnect(false);
+  }
 }
 
-const bot = new SelfbotEngine();
+// ============================================================================
+// MULTI-USER SESSIONS & CLEANUP
+// ============================================================================
+
+export const sessions = new Map();
+const SESSION_TTL_MS = 2 * 60 * 60 * 1000; // 2 horas
+const SESSION_CLEANUP_INTERVAL_MS = 30 * 60 * 1000; // 30 minutos
+
+export function resolveSession(req, res, next) {
+  if (req.path === '/api/panel/verify' || req.path === '/api/panel/config') {
+    return next();
+  }
+
+  const rawSessionId = req.headers['x-session-id'] || req.query?.sid;
+  const sessionId = typeof rawSessionId === 'string' ? rawSessionId.trim() : null;
+
+  if (!sessionId) {
+    return res.status(401).json({ error: 'sessionId required' });
+  }
+
+  let botInstance = sessions.get(sessionId);
+  if (!botInstance) {
+    botInstance = new SelfbotEngine();
+    botInstance.panelSessionId = sessionId;
+    botInstance.lastActivity = Date.now();
+    sessions.set(sessionId, botInstance);
+  } else {
+    botInstance.lastActivity = Date.now();
+  }
+
+  req.session = {
+    id: sessionId,
+    bot: botInstance,
+    get lastActivity() {
+      return botInstance.lastActivity;
+    },
+    set lastActivity(val) {
+      botInstance.lastActivity = val;
+    },
+  };
+  req.bot = botInstance;
+
+  next();
+}
+
+// Limpeza de sessões inativas a cada 30min
+setInterval(() => {
+  const now = Date.now();
+  for (const [sid, sessionBot] of sessions.entries()) {
+    if (now - (sessionBot.lastActivity || 0) > SESSION_TTL_MS) {
+      try {
+        sessionBot.destroy();
+      } catch (err) {
+        console.error(`[Session Cleanup] Erro ao destruir sessão ${sid}:`, err);
+      }
+      sessions.delete(sid);
+      console.log(`[Session Cleanup] Sessão inativa destruída: ${sid}`);
+    }
+  }
+}, SESSION_CLEANUP_INTERVAL_MS).unref();
 
 // ============================================================================
 // PANEL PIN MIDDLEWARE
@@ -1938,7 +2008,7 @@ const PANEL_PIN = process.env.PANEL_PIN || null;
 
 function requirePin(req, res, next) {
   if (!PANEL_PIN) return next();
-  const pin = req.headers['x-panel-pin'] || req.body?.panelPin;
+  const pin = req.headers['x-panel-pin'] || req.body?.panelPin || req.query?.pin;
   if (pin === PANEL_PIN) return next();
   return res.status(401).json({ error: 'PIN inválido', requirePin: true });
 }
@@ -1954,22 +2024,30 @@ app.get('/api/panel/config', (_req, res) => {
   res.json({ pinRequired: Boolean(PANEL_PIN) });
 });
 
-// Proteção global: todas as rotas /api/* exceto as públicas acima
+// Proteção global: todas as rotas /api/* exceto as públicas acima passam por PIN
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
   if (req.path === '/api/panel/verify' || req.path === '/api/panel/config') return next();
   return requirePin(req, res, next);
 });
 
+// Middleware de sessão: todas as rotas /api/* exceto as públicas acima passam por resolveSession
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/')) return next();
+  return resolveSession(req, res, next);
+});
+
 // ============================================================================
 // API ROUTES
 // ============================================================================
 
-app.get('/api/state', (_req, res) => {
+app.get('/api/state', (req, res) => {
+  const bot = req.bot;
   res.json(bot.getPublicState());
 });
 
 app.get('/api/events', (req, res) => {
+  const bot = req.bot;
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -1985,6 +2063,7 @@ app.get('/api/events', (req, res) => {
 
 // Login & Connect Gateway
 app.post('/api/auth', async (req, res) => {
+  const bot = req.bot;
   const { token, guildId } = req.body || {};
   if (!token) return res.status(400).json({ error: 'Token é obrigatório' });
   try {
@@ -1996,11 +2075,13 @@ app.post('/api/auth', async (req, res) => {
 });
 
 app.post('/api/disconnect', (req, res) => {
+  const bot = req.bot;
   bot.disconnect(true);
   res.json({ ok: true, state: bot.getPublicState() });
 });
 
 app.post('/api/guild/select', async (req, res) => {
+  const bot = req.bot;
   const { guildId, forceRefresh } = req.body || {};
   if (!guildId) return res.status(400).json({ error: 'guildId obrigatório' });
   if (forceRefresh && bot.guilds.has(String(guildId))) {
@@ -2017,6 +2098,7 @@ app.post('/api/guild/select', async (req, res) => {
 // ============================================================================
 
 app.post('/api/voice/join', (req, res) => {
+  const bot = req.bot;
   const {
     guildId,
     channelId,
@@ -2068,6 +2150,7 @@ app.post('/api/voice/join', (req, res) => {
 });
 
 app.post('/api/voice/leave', (req, res) => {
+  const bot = req.bot;
   bot._ignoreAntiDisconnectUntil = Date.now() + 4000;
   bot.features.antiDisconnect.enabled = false;
   bot.features.followCall.enabled = false;
@@ -2084,6 +2167,7 @@ app.post('/api/voice/leave', (req, res) => {
 });
 
 app.post('/api/voice/config', (req, res) => {
+  const bot = req.bot;
   const { selfMute, selfDeaf, selfVideo, fakeStream, useIpcForAutoVoice } = req.body || {};
   const prevStream = bot.voiceConfig.fakeStream;
 
@@ -2120,6 +2204,7 @@ app.post('/api/voice/config', (req, res) => {
 // ============================================================================
 
 app.post('/api/features/anti-disconnect', async (req, res) => {
+  const bot = req.bot;
   const { enabled, guildId, channelId, delayMs, rejoinOnMove } = req.body || {};
 
   if (guildId !== undefined) {
@@ -2162,6 +2247,7 @@ app.post('/api/features/anti-disconnect', async (req, res) => {
 });
 
 app.post('/api/features/anti-mute', (req, res) => {
+  const bot = req.bot;
   const { enabled, unmute, undeaf } = req.body || {};
   if (enabled !== undefined) bot.features.antiMute.enabled = Boolean(enabled);
   if (unmute !== undefined) bot.features.antiMute.unmute = Boolean(unmute);
@@ -2191,6 +2277,7 @@ app.post('/api/features/anti-mute', (req, res) => {
 });
 
 app.post('/api/features/follow', async (req, res) => {
+  const bot = req.bot;
   const { enabled, targetUserId, delayMs, leaveWhenTargetLeaves, syncAntiDisconnect } =
     req.body || {};
 
@@ -2228,6 +2315,7 @@ app.post('/api/features/follow', async (req, res) => {
 });
 
 app.post('/api/features/coleira', async (req, res) => {
+  const bot = req.bot;
   const {
     enabled,
     action,
@@ -2290,6 +2378,7 @@ app.post('/api/features/coleira', async (req, res) => {
 });
 
 app.post('/api/features/anti-call', async (req, res) => {
+  const bot = req.bot;
   const { enabled, action, targetUserId } = req.body || {};
 
   if (action === 'add' && targetUserId) {
@@ -2319,6 +2408,7 @@ app.post('/api/features/anti-call', async (req, res) => {
 });
 
 app.post('/api/features/mute-lock', async (req, res) => {
+  const bot = req.bot;
   const { enabled, action, targetUserId, mute, deaf } = req.body || {};
   if (mute !== undefined) bot.features.muteLock.mute = Boolean(mute);
   if (deaf !== undefined) bot.features.muteLock.deaf = Boolean(deaf);
@@ -2355,6 +2445,7 @@ app.post('/api/features/mute-lock', async (req, res) => {
 });
 
 app.post('/api/features/guard', async (req, res) => {
+  const bot = req.bot;
   const { enabled, action, targetUserId, antiMute, keepInMyCall } = req.body || {};
   if (antiMute !== undefined) bot.features.guard.antiMute = Boolean(antiMute);
   if (keepInMyCall !== undefined) bot.features.guard.keepInMyCall = Boolean(keepInMyCall);
@@ -2381,6 +2472,7 @@ app.post('/api/features/guard', async (req, res) => {
 });
 
 app.post('/api/features/chaotic-mover', async (req, res) => {
+  const bot = req.bot;
   const { enabled, targetUserId, guildId, intervalMs } = req.body || {};
   if (targetUserId !== undefined) bot.features.chaoticMover.targetUserId = String(targetUserId).trim();
   if (guildId != null) bot.features.chaoticMover.guildId = String(guildId).trim();
@@ -2398,6 +2490,7 @@ app.post('/api/features/chaotic-mover', async (req, res) => {
 
 // Direct 1-click member actions on voice
 app.post('/api/voice/member-action', async (req, res) => {
+  const bot = req.bot;
   const { guildId, userId, action, channelId } = req.body || {};
   const gId = guildId || bot.selectedGuildId || bot.currentVoice.guildId;
   if (!gId || !userId || !action) {
@@ -2450,6 +2543,7 @@ app.post('/api/voice/member-action', async (req, res) => {
 // ============================================================================
 
 app.post('/api/presence', (req, res) => {
+  const bot = req.bot;
   const {
     status,
     activityType,
@@ -2475,6 +2569,7 @@ app.post('/api/presence', (req, res) => {
 });
 
 app.post('/api/features/automation', (req, res) => {
+  const bot = req.bot;
   const { autoReply, nitroSniper } = req.body || {};
   if (autoReply && typeof autoReply === 'object') {
     bot.features.autoReply = { ...bot.features.autoReply, ...autoReply };
@@ -2488,6 +2583,7 @@ app.post('/api/features/automation', (req, res) => {
 });
 
 app.post('/api/chat/ghost-ping', async (req, res) => {
+  const bot = req.bot;
   const { channelId, targetUserId, customText } = req.body || {};
   if (!bot.token || !channelId || !targetUserId) {
     return res.status(400).json({ error: 'channelId e targetUserId obrigatórios' });
@@ -2511,6 +2607,7 @@ app.post('/api/chat/ghost-ping', async (req, res) => {
 });
 
 app.post('/api/chat/purge', async (req, res) => {
+  const bot = req.bot;
   const { channelId: rawId, limit = 25 } = req.body || {};
   if (!bot.token || !bot.user || !rawId) {
     return res.status(400).json({ error: 'Conecte o selfbot e informe o channelId' });
@@ -2566,6 +2663,7 @@ app.post('/api/chat/purge', async (req, res) => {
 });
 
 app.post('/api/chat/send', async (req, res) => {
+  const bot = req.bot;
   const { channelId, content, count = 1, delayMs = 1200 } = req.body || {};
   if (!bot.token || !channelId || !content) {
     return res.status(400).json({ error: 'channelId e content obrigatórios' });
@@ -2597,6 +2695,7 @@ app.post('/api/chat/send', async (req, res) => {
 // ============================================================================
 
 app.post('/api/batch/invites', async (req, res) => {
+  const bot = req.bot;
   const { token, guildId, channels = [], maxAge = 0, maxUses = 0 } = req.body || {};
   const activeToken = formatToken(token || bot.token);
   const activeGuildId = String(guildId || bot.selectedGuildId || '');
@@ -2638,6 +2737,7 @@ app.post('/api/batch/invites', async (req, res) => {
 });
 
 app.post('/api/batch/roles', async (req, res) => {
+  const bot = req.bot;
   const { token, guildId, roles = [], name, color, count = 1, permissions = '0', hoist = false } =
     req.body || {};
   const activeToken = formatToken(token || bot.token);
@@ -2682,6 +2782,7 @@ app.post('/api/batch/roles', async (req, res) => {
 });
 
 app.post('/api/batch/channels', async (req, res) => {
+  const bot = req.bot;
   const { token, guildId, channels = [], name, type = 0, count = 1, parentId = null } =
     req.body || {};
   const activeToken = formatToken(token || bot.token);
@@ -2726,6 +2827,7 @@ app.post('/api/batch/channels', async (req, res) => {
 });
 
 app.post('/api/channel/nuke', async (req, res) => {
+  const bot = req.bot;
   const { channelId } = req.body || {};
   if (!bot.token || !channelId) {
     return res.status(400).json({ error: 'channelId obrigatório' });
@@ -2761,6 +2863,7 @@ app.post('/api/channel/nuke', async (req, res) => {
 });
 
 app.get('/api/debug/permissions/:guildId', async (req, res) => {
+  const bot = req.bot;
   try {
     const { guildId } = req.params;
     // Busca o membro atual no servidor
@@ -2805,6 +2908,7 @@ app.get('/api/debug/permissions/:guildId', async (req, res) => {
 });
 
 app.post('/api/logs/clear', (req, res) => {
+  const bot = req.bot;
   bot.logs = [];
   bot.broadcastState();
   res.json({ ok: true });
@@ -2906,6 +3010,7 @@ app.get('/api/tokens/scan', async (req, res) => {
 });
 
 app.post('/api/limpar-dm', async (req, res) => {
+  const bot = req.bot;
   const { targetId, delayMs = 700 } = req.body || {};
   if (!bot.token || !bot.user) {
     return res.status(400).json({ error: 'Conecte o selfbot primeiro' });

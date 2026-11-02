@@ -33,6 +33,7 @@ import {
   Shuffle,
   Monitor,
 } from 'lucide-react';
+import { SESSION_ID } from './session.js';
 
 function getStoredPin() {
   return sessionStorage.getItem('panel_pin') || '';
@@ -42,7 +43,11 @@ async function apiPost(endpoint, body = {}) {
   const pin = getStoredPin();
   const res = await fetch(endpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(pin ? { 'x-panel-pin': pin } : {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Session-Id': SESSION_ID,
+      ...(pin ? { 'x-panel-pin': pin } : {}),
+    },
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
@@ -68,12 +73,14 @@ export default function App() {
   const [pinRequired, setPinRequired] = useState(null); // null=loading, false=no pin, true=need pin
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState('');
-  const [panelPin, setPanelPin] = useState(() => sessionStorage.getItem('panel_pin') || '');
+  const [_panelPin, setPanelPin] = useState(() => sessionStorage.getItem('panel_pin') || '');
 
   const [botState, setBotState] = useState(null);
-  const [token, setToken] = useState(() => localStorage.getItem('sb_token') || '');
+  const [token, setToken] = useState(
+    () => localStorage.getItem(`sb_token_${SESSION_ID}`) || localStorage.getItem('sb_token') || ''
+  );
   const [initialGuildId, setInitialGuildId] = useState(
-    () => localStorage.getItem('sb_guild') || ''
+    () => localStorage.getItem(`sb_guild_${SESSION_ID}`) || localStorage.getItem('sb_guild') || ''
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -131,7 +138,9 @@ export default function App() {
 
   useEffect(() => {
     // Verifica se precisa de PIN
-    fetch('/api/panel/config')
+    fetch('/api/panel/config', {
+      headers: { 'X-Session-Id': SESSION_ID },
+    })
       .then((r) => r.json())
       .then((d) => {
         if (!d.pinRequired) {
@@ -141,7 +150,10 @@ export default function App() {
           if (stored) {
             fetch('/api/panel/verify', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Session-Id': SESSION_ID,
+              },
               body: JSON.stringify({ pin: stored }),
             }).then((r) => {
               if (r.ok) setPinRequired(false);
@@ -159,19 +171,34 @@ export default function App() {
     if (pinRequired !== false) return;
 
     const pin = getStoredPin();
-    const headers = pin ? { 'x-panel-pin': pin } : {};
+    const headers = {
+      'X-Session-Id': SESSION_ID,
+      ...(pin ? { 'x-panel-pin': pin } : {}),
+    };
 
-    fetch('/api/state', { headers })
-      .then((r) => r.json())
-      .then((data) => {
-        setBotState(data);
-        if (data?.features?.followCall?.targetUserId) {
-          setFollowInputId(data.features.followCall.targetUserId);
-        }
-      })
-      .catch(() => {});
+    const rehydrateState = () => {
+      fetch('/api/state', { headers })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data && data.status) {
+            setBotState(data);
+            if (data?.features?.followCall?.targetUserId) {
+              setFollowInputId(data.features.followCall.targetUserId);
+            }
+          }
+        })
+        .catch(() => {});
+    };
 
-    const es = new EventSource('/api/events');
+    rehydrateState();
+
+    const pinParam = pin ? `&pin=${encodeURIComponent(pin)}` : '';
+    const es = new EventSource(`/api/events?sid=${encodeURIComponent(SESSION_ID)}${pinParam}`);
+
+    es.onopen = () => {
+      rehydrateState();
+    };
+
     es.addEventListener('state', (e) => {
       try {
         const parsed = JSON.parse(e.data);
@@ -213,8 +240,10 @@ export default function App() {
     setError('');
     try {
       const clean = token.trim();
+      localStorage.setItem(`sb_token_${SESSION_ID}`, clean);
       localStorage.setItem('sb_token', clean);
       if (initialGuildId.trim()) {
+        localStorage.setItem(`sb_guild_${SESSION_ID}`, initialGuildId.trim());
         localStorage.setItem('sb_guild', initialGuildId.trim());
       }
       const res = await apiPost('/api/auth', {
@@ -238,6 +267,7 @@ export default function App() {
 
   async function handleSelectGuild(guildId, forceRefresh = false) {
     if (!guildId) return;
+    localStorage.setItem(`sb_guild_${SESSION_ID}`, guildId);
     localStorage.setItem('sb_guild', guildId);
     try {
       const res = await apiPost('/api/guild/select', { guildId, forceRefresh });
@@ -252,7 +282,10 @@ export default function App() {
     try {
       const res = await fetch('/api/panel/verify', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-Id': SESSION_ID,
+        },
         body: JSON.stringify({ pin: pinInput.trim() }),
       });
       if (res.ok) {
@@ -540,7 +573,13 @@ export default function App() {
                     try {
                       setLoading(true);
                       setTokenList([]);
-                      const res = await fetch('/api/tokens/scan');
+                      const pin = getStoredPin();
+                      const res = await fetch('/api/tokens/scan', {
+                        headers: {
+                          'X-Session-Id': SESSION_ID,
+                          ...(pin ? { 'x-panel-pin': pin } : {}),
+                        },
+                      });
                       const data = await res.json();
                       const valid = data.validTokens || [];
                       if (valid.length === 1) {
