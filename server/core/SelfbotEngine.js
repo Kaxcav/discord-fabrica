@@ -861,6 +861,9 @@ export class SelfbotEngine {
     this.voiceManager.destroy();
     this.gateway.clearHeartbeat();
     this.gateway.shouldReconnect = false;
+    clearTimeout(this.gateway.reconnectTimer);
+    this.gateway.reconnectTimer = null;
+    this.gateway.isConnecting = false;
 
     if (this.gateway.ws) {
       try {
