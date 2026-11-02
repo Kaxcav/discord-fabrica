@@ -34,10 +34,15 @@ import {
   Monitor,
 } from 'lucide-react';
 
+function getStoredPin() {
+  return sessionStorage.getItem('panel_pin') || '';
+}
+
 async function apiPost(endpoint, body = {}) {
+  const pin = getStoredPin();
   const res = await fetch(endpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(pin ? { 'x-panel-pin': pin } : {}) },
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
@@ -60,6 +65,11 @@ function getGuildIconUrl(guildId, iconHash) {
 }
 
 export default function App() {
+  const [pinRequired, setPinRequired] = useState(null); // null=loading, false=no pin, true=need pin
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState('');
+  const [panelPin, setPanelPin] = useState(() => sessionStorage.getItem('panel_pin') || '');
+
   const [botState, setBotState] = useState(null);
   const [token, setToken] = useState(() => localStorage.getItem('sb_token') || '');
   const [initialGuildId, setInitialGuildId] = useState(
@@ -120,7 +130,38 @@ export default function App() {
   const [nukeChannelId, setNukeChannelId] = useState('');
 
   useEffect(() => {
-    fetch('/api/state')
+    // Verifica se precisa de PIN
+    fetch('/api/panel/config')
+      .then((r) => r.json())
+      .then((d) => {
+        if (!d.pinRequired) {
+          setPinRequired(false);
+        } else {
+          const stored = sessionStorage.getItem('panel_pin');
+          if (stored) {
+            fetch('/api/panel/verify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ pin: stored }),
+            }).then((r) => {
+              if (r.ok) setPinRequired(false);
+              else { sessionStorage.removeItem('panel_pin'); setPinRequired(true); }
+            }).catch(() => setPinRequired(true));
+          } else {
+            setPinRequired(true);
+          }
+        }
+      })
+      .catch(() => setPinRequired(false));
+  }, []);
+
+  useEffect(() => {
+    if (pinRequired !== false) return;
+
+    const pin = getStoredPin();
+    const headers = pin ? { 'x-panel-pin': pin } : {};
+
+    fetch('/api/state', { headers })
       .then((r) => r.json())
       .then((data) => {
         setBotState(data);
@@ -159,7 +200,7 @@ export default function App() {
     });
 
     return () => es.close();
-  }, []);
+  }, [pinRequired]);
 
   const isConnected =
     botState?.status === 'connected' ||
@@ -203,6 +244,28 @@ export default function App() {
       if (res.state) setBotState(res.state);
     } catch (err) {
       setError(err.message);
+    }
+  }
+
+  async function handlePinSubmit() {
+    if (!pinInput.trim()) return;
+    try {
+      const res = await fetch('/api/panel/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: pinInput.trim() }),
+      });
+      if (res.ok) {
+        sessionStorage.setItem('panel_pin', pinInput.trim());
+        setPanelPin(pinInput.trim());
+        setPinRequired(false);
+        setPinError('');
+      } else {
+        setPinError('PIN incorreto. Tente novamente.');
+        setPinInput('');
+      }
+    } catch {
+      setPinError('Erro ao verificar PIN.');
     }
   }
 
@@ -387,6 +450,49 @@ export default function App() {
     () => new Set((botState?.features?.guard?.targets || []).map((t) => t.id)),
     [botState?.features?.guard?.targets]
   );
+
+  // ===========================================================================
+  // TELA DE PIN
+  // ===========================================================================
+
+  if (pinRequired === null) {
+    return (
+      <div className="min-h-screen bg-[#0b0d12] flex items-center justify-center">
+        <div className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (pinRequired === true) {
+    return (
+      <div className="min-h-screen bg-[#0b0d12] text-[#e2e8f0] flex items-center justify-center p-4">
+        <div className="w-full max-w-sm bg-[#131722] rounded-xl border border-[#1e2638] shadow-2xl p-6">
+          <div className="flex items-center gap-3 mb-5">
+            <Lock className="w-5 h-5 text-cyan-400" />
+            <h1 className="text-base font-bold text-white">Acesso Restrito</h1>
+          </div>
+          <p className="text-xs text-[#64748b] mb-4">Digite o PIN configurado na variável <code className="text-cyan-400">PANEL_PIN</code> do Railway.</p>
+          <input
+            type="password"
+            value={pinInput}
+            onChange={(e) => setPinInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handlePinSubmit()}
+            placeholder="••••••"
+            className="w-full px-3 py-2 bg-[#0b0d12] border border-[#1e2638] rounded-lg text-sm text-white placeholder-[#475569] focus:outline-none focus:border-cyan-500 mb-3"
+            autoFocus
+          />
+          {pinError && <p className="text-xs text-red-400 mb-3">{pinError}</p>}
+          <button
+            onClick={handlePinSubmit}
+            disabled={!pinInput.trim()}
+            className="w-full py-2 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-white font-semibold rounded-lg text-sm transition-colors cursor-pointer"
+          >
+            Entrar
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // ===========================================================================
   // TELA DE LOGIN

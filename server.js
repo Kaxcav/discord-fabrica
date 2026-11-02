@@ -1931,10 +1931,41 @@ class SelfbotEngine {
 const bot = new SelfbotEngine();
 
 // ============================================================================
+// PANEL PIN MIDDLEWARE
+// ============================================================================
+
+const PANEL_PIN = process.env.PANEL_PIN || null;
+
+function requirePin(req, res, next) {
+  if (!PANEL_PIN) return next();
+  const pin = req.headers['x-panel-pin'] || req.body?.panelPin;
+  if (pin === PANEL_PIN) return next();
+  return res.status(401).json({ error: 'PIN inválido', requirePin: true });
+}
+
+app.post('/api/panel/verify', (req, res) => {
+  if (!PANEL_PIN) return res.json({ ok: true, pinRequired: false });
+  const { pin } = req.body || {};
+  if (pin === PANEL_PIN) return res.json({ ok: true });
+  return res.status(401).json({ ok: false, error: 'PIN incorreto' });
+});
+
+app.get('/api/panel/config', (_req, res) => {
+  res.json({ pinRequired: Boolean(PANEL_PIN) });
+});
+
+// Proteção global: todas as rotas /api/* exceto as públicas acima
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/')) return next();
+  if (req.path === '/api/panel/verify' || req.path === '/api/panel/config') return next();
+  return requirePin(req, res, next);
+});
+
+// ============================================================================
 // API ROUTES
 // ============================================================================
 
-app.get('/api/state', (req, res) => {
+app.get('/api/state', (_req, res) => {
   res.json(bot.getPublicState());
 });
 
