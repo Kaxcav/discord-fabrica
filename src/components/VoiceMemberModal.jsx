@@ -263,7 +263,8 @@ export default function VoiceMemberModal() {
                     action: inMuteLock ? 'remove' : 'add',
                     targetUserId: m.userId,
                     mute: true,
-                    deaf: true,
+                    deaf: false,
+                    kickFallback: true,
                   })
                 }
                 className={`p-2 rounded-lg border flex items-center gap-2 cursor-pointer ${
@@ -273,7 +274,7 @@ export default function VoiceMemberModal() {
                 }`}
               >
                 <VolumeX className="w-4 h-4" />
-                <span>{inMuteLock ? 'Mute-Lock Ativo' : 'Travar Mute/Deaf'}</span>
+                <span>{inMuteLock ? 'Mute-Lock Ativo' : 'Travar Mute'}</span>
               </button>
             </div>
           </div>

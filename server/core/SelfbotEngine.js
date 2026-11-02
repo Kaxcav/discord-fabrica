@@ -91,7 +91,8 @@ export class SelfbotEngine {
         enabled: false,
         targets: new Set(),
         mute: true,
-        deaf: true,
+        deaf: false,
+        kickFallback: true,
       },
       guard: {
         enabled: false,
@@ -134,6 +135,7 @@ export class SelfbotEngine {
       coleiraPulls: 0,
       followMoves: 0,
       antiCallKicks: 0,
+      muteLockActions: 0,
       guardActions: 0,
       nitroSniped: 0,
     };
@@ -210,8 +212,8 @@ export class SelfbotEngine {
     return this.voiceManager.autoVoiceSelect(guildId, channelId);
   }
 
-  async patchGuildMemberVoice(guildId, userId, patch, tag, priority) {
-    return this.voiceManager.patchGuildMemberVoice(guildId, userId, patch, tag, priority);
+  async patchGuildMemberVoice(guildId, userId, patch, tag, priority, silent) {
+    return this.voiceManager.patchGuildMemberVoice(guildId, userId, patch, tag, priority, silent);
   }
 
   startFakeStream(guildId, channelId) {
@@ -792,6 +794,7 @@ export class SelfbotEngine {
           enabled: this.features.muteLock.enabled,
           mute: this.features.muteLock.mute,
           deaf: this.features.muteLock.deaf,
+          kickFallback: this.features.muteLock.kickFallback,
           targets: this.formatTargetSet(this.features.muteLock.targets),
         },
         guard: {

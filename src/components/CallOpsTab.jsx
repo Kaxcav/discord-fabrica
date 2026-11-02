@@ -26,6 +26,12 @@ export default function CallOpsTab() {
     setAntiCallInputId,
     muteLockInputId,
     setMuteLockInputId,
+    muteLockServerMute,
+    setMuteLockServerMute,
+    muteLockServerDeaf,
+    setMuteLockServerDeaf,
+    muteLockKickFallback,
+    setMuteLockKickFallback,
     guardInputId,
     setGuardInputId,
     chaosTargetId,
@@ -562,12 +568,55 @@ export default function CallOpsTab() {
         <div className="bg-[#0b0d12] p-3 rounded-lg border border-[#1e2638] space-y-2">
           <div className="flex items-center justify-between text-xs">
             <span className="font-semibold text-purple-400">
-              Mute-Lock (Travar Alvo com Server Mute/Deaf em Loop)
+              Mute-Lock (Travar Alvo com Server Mute em Loop)
             </span>
             <span className="font-mono text-[#64748b]">
               {feat.muteLock?.targets?.length || 0} travado(s)
             </span>
           </div>
+
+          <div className="flex flex-wrap items-center gap-4 text-xs text-[#94a3b8] pt-1">
+            <label className="flex items-center gap-1.5 cursor-pointer hover:text-white">
+              <input
+                type="checkbox"
+                checked={muteLockServerMute}
+                onChange={(e) => {
+                  setMuteLockServerMute(e.target.checked);
+                  updateMuteLock({ mute: e.target.checked });
+                }}
+                className="rounded border-[#1e2638] bg-[#131722] text-purple-500 focus:ring-0"
+              />
+              <span>Server Mute</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer hover:text-white">
+              <input
+                type="checkbox"
+                checked={muteLockServerDeaf}
+                onChange={(e) => {
+                  setMuteLockServerDeaf(e.target.checked);
+                  updateMuteLock({ deaf: e.target.checked });
+                }}
+                className="rounded border-[#1e2638] bg-[#131722] text-purple-500 focus:ring-0"
+              />
+              <span>Server Deaf</span>
+            </label>
+            <label
+              className="flex items-center gap-1.5 cursor-pointer hover:text-white"
+              title="Se faltar permissão MUTE_MEMBERS ou hierarquia bloquear (403), desconecta o alvo da call como fallback"
+            >
+              <input
+                type="checkbox"
+                checked={muteLockKickFallback}
+                onChange={(e) => {
+                  setMuteLockKickFallback(e.target.checked);
+                  updateMuteLock({ kickFallback: e.target.checked });
+                }}
+                className="rounded border-[#1e2638] bg-[#131722] text-purple-500 focus:ring-0"
+              />
+              <span>Kick Fallback (se 403)</span>
+            </label>
+          </div>
+
           <div className="flex gap-2">
             <input
               type="text"
@@ -579,7 +628,13 @@ export default function CallOpsTab() {
             <button
               onClick={() => {
                 if (!muteLockInputId.trim()) return;
-                updateMuteLock({ action: 'add', targetUserId: muteLockInputId.trim() });
+                updateMuteLock({
+                  action: 'add',
+                  targetUserId: muteLockInputId.trim(),
+                  mute: muteLockServerMute,
+                  deaf: muteLockServerDeaf,
+                  kickFallback: muteLockKickFallback,
+                });
                 setMuteLockInputId('');
               }}
               disabled={!muteLockInputId.trim()}

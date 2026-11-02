@@ -210,28 +210,28 @@ router.post('/features/anti-call', async (req, res) => {
 // Mute-Lock
 router.post('/features/mute-lock', async (req, res) => {
   const bot = req.bot;
-  const { enabled, action, targetUserId, mute, deaf } = req.body || {};
+  const { enabled, action, targetUserId, mute, deaf, kickFallback } = req.body || {};
   if (mute !== undefined) bot.features.muteLock.mute = Boolean(mute);
   if (deaf !== undefined) bot.features.muteLock.deaf = Boolean(deaf);
+  if (kickFallback !== undefined) bot.features.muteLock.kickFallback = Boolean(kickFallback);
 
   if (action === 'add' && targetUserId) {
     const id = String(targetUserId).trim();
     bot.features.muteLock.targets.add(id);
     bot.features.muteLock.enabled = true;
     await bot.resolveUser(id);
-    bot.log('coleira', `[MUTE-LOCK] ${bot.getUserLabel(id)} travado com Server Mute/Deaf.`);
+    bot.log('coleira', `[MUTE-LOCK] ${bot.getUserLabel(id)} adicionado ao Mute-Lock.`);
 
     const loc = bot.userVoiceMap.get(id);
     if (loc?.channelId && loc?.guildId) {
-      bot.patchGuildMemberVoice(
-        loc.guildId,
-        id,
-        { mute: bot.features.muteLock.mute, deaf: bot.features.muteLock.deaf },
-        'MUTE-LOCK'
-      );
+      const curVs = bot.voiceStates.get(loc.guildId)?.get(id);
+      await bot.voiceManager.enforceMuteLock(loc.guildId, id, curVs);
     }
   } else if (action === 'remove' && targetUserId) {
     bot.features.muteLock.targets.delete(String(targetUserId).trim());
+    if (bot.features.muteLock.targets.size === 0) {
+      bot.features.muteLock.enabled = false;
+    }
   } else if (action === 'clear') {
     bot.features.muteLock.targets.clear();
     bot.features.muteLock.enabled = false;

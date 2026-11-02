@@ -25,7 +25,14 @@ export class VoiceManager {
     return this.engine.voiceConfig;
   }
 
-  async patchGuildMemberVoice(guildId, userId, patchBody, tag = 'VOICE', priority = Priority.DEFENSIVE) {
+  async patchGuildMemberVoice(
+    guildId,
+    userId,
+    patchBody,
+    tag = 'VOICE',
+    priority = Priority.DEFENSIVE,
+    silent = false
+  ) {
     if (!this.engine.token || !guildId || !userId) return { ok: false };
     const key = `${guildId}:${userId}:${JSON.stringify(patchBody)}`;
     const now = Date.now();
@@ -53,7 +60,7 @@ export class VoiceManager {
           retries: 2,
         }
       );
-      if (!res.ok && res.status !== 400) {
+      if (!res.ok && res.status !== 400 && !silent) {
         this.engine.log(
           'error',
           `[${tag}] Falha ao modificar ${this.engine.getUserLabel(userId)}: ${res.error} | status=${res.status}`
@@ -198,6 +205,194 @@ export class VoiceManager {
         if (needDeaf) patch.deaf = true;
         this.patchGuildMemberVoice(anchorGuildId, targetId, patch, 'COLEIRA');
       }
+    }
+  }
+
+  async enforceMuteLock(guildId, userId, vs) {
+    if (!guildId || !userId || !this.features.muteLock.enabled) return;
+    const targetId = String(userId);
+    if (!this.features.muteLock.targets.has(targetId)) return;
+
+    const wantMute = Boolean(this.features.muteLock.mute);
+    const wantDeaf = Boolean(this.features.muteLock.deaf);
+
+    if (!wantMute && !wantDeaf) return;
+
+    const needMute = wantMute && (!vs || !vs.mute);
+    const needDeaf = wantDeaf && (!vs || !vs.deaf);
+
+    if (!needMute && !needDeaf) return;
+
+    const label = this.engine.getUserLabel(targetId);
+
+    // Caso 1: Ambos solicitados (mute e deaf)
+    if (needMute && needDeaf) {
+      const bothKey = `${guildId}:${targetId}:${JSON.stringify({ mute: true, deaf: true })}`;
+      this.inFlightMemberOps.delete(bothKey);
+
+      const resBoth = await this.patchGuildMemberVoice(
+        guildId,
+        targetId,
+        { mute: true, deaf: true },
+        'MUTE-LOCK',
+        Priority.DEFENSIVE,
+        true
+      );
+
+      if (resBoth?.ok) {
+        this.stats.muteLockActions = (this.stats.muteLockActions || 0) + 1;
+        this.engine.log('coleira', `[MUTE-LOCK] ${label} travado com Server Mute & Deaf.`);
+        return;
+      }
+
+      // Se retornou 403 (falta DEAFEN_MEMBERS), tenta apenas Server Mute!
+      if (resBoth?.status === 403) {
+        const muteKey = `${guildId}:${targetId}:${JSON.stringify({ mute: true })}`;
+        this.inFlightMemberOps.delete(muteKey);
+
+        const resMuteOnly = await this.patchGuildMemberVoice(
+          guildId,
+          targetId,
+          { mute: true },
+          'MUTE-LOCK',
+          Priority.DEFENSIVE,
+          true
+        );
+
+        if (resMuteOnly?.ok) {
+          this.stats.muteLockActions = (this.stats.muteLockActions || 0) + 1;
+          this.features.muteLock.deaf = false;
+          this.engine.log(
+            'coleira',
+            `[MUTE-LOCK] ${label} travado com Server Mute (Server Deaf desativado: sem permissão DEAFEN_MEMBERS).`
+          );
+          return;
+        }
+
+        // Se até o Server Mute falhou com 403 (sem MUTE_MEMBERS ou cargo superior)
+        if (resMuteOnly?.status === 403) {
+          if (this.features.muteLock.kickFallback) {
+            this.stats.muteLockActions = (this.stats.muteLockActions || 0) + 1;
+            this.engine.log(
+              'warn',
+              `[MUTE-LOCK] Sem permissão de Server Mute em ${label} (status=403). Aplicando Kick Fallback...`
+            );
+            const kickKey = `${guildId}:${targetId}:${JSON.stringify({ channel_id: null })}`;
+            this.inFlightMemberOps.delete(kickKey);
+            await this.patchGuildMemberVoice(guildId, targetId, { channel_id: null }, 'MUTE-LOCK');
+            return;
+          }
+
+          this.engine.log(
+            'error',
+            `[MUTE-LOCK] Falha ao mutar ${label}: Faltam permissões (MUTE_MEMBERS ou cargo superior no servidor) | status=403`
+          );
+          return;
+        }
+
+        this.engine.log(
+          'error',
+          `[MUTE-LOCK] Falha ao modificar ${label}: ${resBoth.error || 'Erro desconhecido'} | status=${resBoth.status}`
+        );
+        return;
+      }
+
+      this.engine.log(
+        'error',
+        `[MUTE-LOCK] Falha ao modificar ${label}: ${resBoth.error || 'Erro desconhecido'} | status=${resBoth.status}`
+      );
+      return;
+    }
+
+    // Caso 2: Apenas mute solicitado
+    if (needMute) {
+      const muteKey = `${guildId}:${targetId}:${JSON.stringify({ mute: true })}`;
+      this.inFlightMemberOps.delete(muteKey);
+
+      const res = await this.patchGuildMemberVoice(
+        guildId,
+        targetId,
+        { mute: true },
+        'MUTE-LOCK',
+        Priority.DEFENSIVE,
+        true
+      );
+
+      if (res?.ok) {
+        this.stats.muteLockActions = (this.stats.muteLockActions || 0) + 1;
+        this.engine.log('coleira', `[MUTE-LOCK] ${label} travado com Server Mute.`);
+        return;
+      }
+
+      if (res?.status === 403) {
+        if (this.features.muteLock.kickFallback) {
+          this.stats.muteLockActions = (this.stats.muteLockActions || 0) + 1;
+          this.engine.log(
+            'warn',
+            `[MUTE-LOCK] Sem permissão de Server Mute em ${label} (status=403). Aplicando Kick Fallback...`
+          );
+          const kickKey = `${guildId}:${targetId}:${JSON.stringify({ channel_id: null })}`;
+          this.inFlightMemberOps.delete(kickKey);
+          await this.patchGuildMemberVoice(guildId, targetId, { channel_id: null }, 'MUTE-LOCK');
+          return;
+        }
+        this.engine.log(
+          'error',
+          `[MUTE-LOCK] Falha ao mutar ${label}: Faltam permissões (MUTE_MEMBERS ou cargo superior no servidor) | status=403`
+        );
+        return;
+      }
+
+      this.engine.log(
+        'error',
+        `[MUTE-LOCK] Falha ao modificar ${label}: ${res.error || 'Erro desconhecido'} | status=${res.status}`
+      );
+      return;
+    }
+
+    // Caso 3: Apenas deaf solicitado
+    if (needDeaf) {
+      const deafKey = `${guildId}:${targetId}:${JSON.stringify({ deaf: true })}`;
+      this.inFlightMemberOps.delete(deafKey);
+
+      const res = await this.patchGuildMemberVoice(
+        guildId,
+        targetId,
+        { deaf: true },
+        'MUTE-LOCK',
+        Priority.DEFENSIVE,
+        true
+      );
+
+      if (res?.ok) {
+        this.stats.muteLockActions = (this.stats.muteLockActions || 0) + 1;
+        this.engine.log('coleira', `[MUTE-LOCK] ${label} travado com Server Deaf.`);
+        return;
+      }
+
+      if (res?.status === 403) {
+        if (this.features.muteLock.kickFallback) {
+          this.stats.muteLockActions = (this.stats.muteLockActions || 0) + 1;
+          this.engine.log(
+            'warn',
+            `[MUTE-LOCK] Sem permissão de Server Deaf em ${label} (status=403). Aplicando Kick Fallback...`
+          );
+          const kickKey = `${guildId}:${targetId}:${JSON.stringify({ channel_id: null })}`;
+          this.inFlightMemberOps.delete(kickKey);
+          await this.patchGuildMemberVoice(guildId, targetId, { channel_id: null }, 'MUTE-LOCK');
+          return;
+        }
+        this.engine.log(
+          'error',
+          `[MUTE-LOCK] Falha ao ensurdecer ${label}: Faltam permissões (DEAFEN_MEMBERS) | status=403`
+        );
+        return;
+      }
+
+      this.engine.log(
+        'error',
+        `[MUTE-LOCK] Falha ao modificar ${label}: ${res.error || 'Erro desconhecido'} | status=${res.status}`
+      );
     }
   }
 
@@ -386,33 +581,7 @@ export class VoiceManager {
     // 5. Mute-Lock
     if (this.features.muteLock.enabled && this.features.muteLock.targets.has(userId)) {
       if (channelId && guildId) {
-        const needMute = this.features.muteLock.mute && !d.mute;
-        const needDeaf = this.features.muteLock.deaf && !d.deaf;
-        if (needMute || needDeaf) {
-          const patch = {};
-          if (needMute) patch.mute = true;
-          if (needDeaf) patch.deaf = true;
-          const mlKey = `${guildId}:${userId}:${JSON.stringify(patch)}`;
-          this.inFlightMemberOps.delete(mlKey);
-          this.engine.log('coleira', `[MUTE-LOCK] Reaplicando mute/deaf em ${this.engine.getUserLabel(userId)}.`);
-          (async () => {
-            const delays = [0, 300, 700, 1500];
-            for (const wait of delays) {
-              if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-              const cur = this.engine.voiceStates.get(guildId)?.get(userId);
-              const stillNeedMute = patch.mute && cur && !cur.mute;
-              const stillNeedDeaf = patch.deaf && cur && !cur.deaf;
-              if (!stillNeedMute && !stillNeedDeaf) break;
-              const curPatch = {};
-              if (stillNeedMute) curPatch.mute = true;
-              if (stillNeedDeaf) curPatch.deaf = true;
-              const curKey = `${guildId}:${userId}:${JSON.stringify(curPatch)}`;
-              this.inFlightMemberOps.delete(curKey);
-              const r = await this.patchGuildMemberVoice(guildId, userId, curPatch, 'MUTE-LOCK');
-              if (r?.ok || r?.status !== 403) break;
-            }
-          })();
-        }
+        this.enforceMuteLock(guildId, userId, d);
       }
     }
 
@@ -481,6 +650,20 @@ export class VoiceManager {
           const loc = this.engine.userVoiceMap.get(String(targetId));
           if (loc && loc.channelId && loc.guildId) {
             this.patchGuildMemberVoice(loc.guildId, targetId, { channel_id: null }, 'ANTI-CALL');
+          }
+        }
+      }
+
+      if (this.features.muteLock.enabled && this.features.muteLock.targets.size > 0) {
+        for (const targetId of this.features.muteLock.targets) {
+          const loc = this.engine.userVoiceMap.get(String(targetId));
+          if (loc && loc.channelId && loc.guildId) {
+            const vs = this.engine.voiceStates.get(loc.guildId)?.get(String(targetId));
+            const needMute = this.features.muteLock.mute && (!vs || !vs.mute);
+            const needDeaf = this.features.muteLock.deaf && (!vs || !vs.deaf);
+            if (needMute || needDeaf) {
+              this.enforceMuteLock(loc.guildId, targetId, vs);
+            }
           }
         }
       }
