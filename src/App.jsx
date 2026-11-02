@@ -6,8 +6,7 @@ import {
   Radio,
   Mic,
   MicOff,
-  Volume2,
-  VolumeX,
+  Headphones,
   Video,
   VideoOff,
   PhoneOff,
@@ -423,28 +422,26 @@ export default function App() {
             onClick={() => updateVoiceConfig({ selfMute: !vc.selfMute })}
             className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 border transition-colors cursor-pointer ${
               vc.selfMute
-                ? 'bg-red-500/20 text-red-300 border-red-500/40'
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                 : 'bg-[#181e2c] text-[#94a3b8] border-[#252f45] hover:text-white'
             }`}
+            title="Alternar Fake Mute (aparece mutado para todos na call)"
           >
             {vc.selfMute ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
-            <span>{vc.selfMute ? 'Mutado' : 'Mic'}</span>
+            <span>{vc.selfMute ? 'Fake Mute ON' : 'Mic Aberto'}</span>
           </button>
 
           <button
             onClick={() => updateVoiceConfig({ selfDeaf: !vc.selfDeaf })}
             className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 border transition-colors cursor-pointer ${
               vc.selfDeaf
-                ? 'bg-red-500/20 text-red-300 border-red-500/40'
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                 : 'bg-[#181e2c] text-[#94a3b8] border-[#252f45] hover:text-white'
             }`}
+            title="Alternar Fake Deaf (aparece ensurdecido na call)"
           >
-            {vc.selfDeaf ? (
-              <VolumeX className="w-3.5 h-3.5" />
-            ) : (
-              <Volume2 className="w-3.5 h-3.5" />
-            )}
-            <span>{vc.selfDeaf ? 'Ensurdecido' : 'Áudio'}</span>
+            <Headphones className="w-3.5 h-3.5" />
+            <span>{vc.selfDeaf ? 'Fake Deaf ON' : 'Fones ON'}</span>
           </button>
 
           <button
@@ -454,9 +451,10 @@ export default function App() {
                 ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
                 : 'bg-[#181e2c] text-[#94a3b8] border-[#252f45] hover:text-white'
             }`}
+            title="Alternar Fake Câmera (ícone de vídeo na call)"
           >
             {vc.selfVideo ? <Video className="w-3.5 h-3.5" /> : <VideoOff className="w-3.5 h-3.5" />}
-            <span>Fake Cam</span>
+            <span>{vc.selfVideo ? 'Fake Cam ON' : 'Fake Cam'}</span>
           </button>
 
           <button
@@ -466,9 +464,10 @@ export default function App() {
                 ? 'bg-red-500/20 text-red-300 border-red-500/40'
                 : 'bg-[#181e2c] text-[#94a3b8] border-[#252f45] hover:text-white'
             }`}
+            title="Alternar Fake Live (tag AO VIVO no canal)"
           >
             <Radio className="w-3.5 h-3.5" />
-            <span>Fake Live</span>
+            <span>{vc.fakeStream ? 'Fake Live ON' : 'Fake Live'}</span>
           </button>
 
           <button

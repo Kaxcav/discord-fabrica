@@ -287,7 +287,91 @@ async function runTests() {
       console.log('✓ Teste 8: Edge cases (whitespace session id e desconexão isolada) verificados com sucesso');
     }
 
-    console.log('\n[TEST RESULT] TODOS OS 8 TESTES DA ARQUITETURA MULTI-USER PASSARAM COM SUCESSO!\n');
+    // -------------------------------------------------------------------------
+    // TESTE 9: Sincronização de Voice State, Fake Mute e Resolução de Call
+    // -------------------------------------------------------------------------
+    {
+      const sVoice = 'session-voice-test';
+      await fetch(`${baseUrl}/api/state`, { headers: { 'X-Session-Id': sVoice } });
+      const botVoice = sessions.get(sVoice);
+
+      // Simula usuário conectado
+      botVoice.user = { id: '9988776655', username: 'TestUser' };
+
+      // 9.1 applyVoiceStateRecord deve atualizar currentVoice e voiceConfig para o próprio usuário
+      botVoice.applyVoiceStateRecord('guild-abc', {
+        user_id: '9988776655',
+        channel_id: 'voice-channel-xyz',
+        self_mute: false,
+        self_deaf: false,
+        mute: false,
+        deaf: false,
+      });
+
+      assert.equal(
+        botVoice.currentVoice.channelId,
+        'voice-channel-xyz',
+        'currentVoice.channelId deve ser sincronizado com a call atual'
+      );
+      assert.equal(
+        botVoice.currentVoice.guildId,
+        'guild-abc',
+        'currentVoice.guildId deve ser sincronizado com o servidor atual'
+      );
+      assert.equal(
+        botVoice.voiceConfig.channelId,
+        'voice-channel-xyz',
+        'voiceConfig.channelId deve ser sincronizado'
+      );
+
+      // 9.2 POST /api/voice/config com { selfMute: true } deve enviar Op 4 e atualizar estado
+      const sentOps = [];
+      botVoice.gateway.sendOp = (op, data) => {
+        sentOps.push({ op, data });
+        return true;
+      };
+
+      const resMute = await fetch(`${baseUrl}/api/voice/config`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-Id': sVoice,
+        },
+        body: JSON.stringify({ selfMute: true }),
+      });
+
+      assert.equal(resMute.status, 200, 'POST /api/voice/config deve retornar 200');
+      const dataMute = await resMute.json();
+      assert.equal(dataMute.config.selfMute, true, 'selfMute deve estar ativo no config retornado');
+      assert.equal(dataMute.state.voiceConfig.selfMute, true, 'selfMute deve estar ativo no state');
+
+      const op4 = sentOps.find((item) => item.op === 4);
+      assert.ok(op4, 'Gateway deve receber Opcode 4 (Voice State Update)');
+      assert.equal(op4.data.guild_id, 'guild-abc', 'Op 4 deve conter o guild_id correto');
+      assert.equal(op4.data.channel_id, 'voice-channel-xyz', 'Op 4 deve conter o channel_id correto');
+      assert.equal(op4.data.self_mute, true, 'Op 4 deve conter self_mute: true');
+      assert.equal(op4.data.preferred_region, null, 'Op 4 deve conter preferred_region: null');
+
+      // 9.3 Desmutar (Fake Mute OFF)
+      sentOps.length = 0;
+      const resUnmute = await fetch(`${baseUrl}/api/voice/config`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-Id': sVoice,
+        },
+        body: JSON.stringify({ selfMute: false }),
+      });
+      assert.equal(resUnmute.status, 200);
+      const op4Unmute = sentOps.find((item) => item.op === 4);
+      assert.ok(op4Unmute, 'Gateway deve receber Opcode 4 ao desmutar');
+      assert.equal(op4Unmute.data.self_mute, false, 'Op 4 deve conter self_mute: false ao desmutar');
+
+      sessions.delete(sVoice);
+      console.log('✓ Teste 9: Sincronização de Voice State, Fake Mute (Op 4) e tracking de call validados');
+    }
+
+    console.log('\n[TEST RESULT] TODOS OS 9 TESTES DA ARQUITETURA MULTI-USER PASSARAM COM SUCESSO!\n');
   } finally {
     server.close();
   }

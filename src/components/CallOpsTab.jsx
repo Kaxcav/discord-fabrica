@@ -3,6 +3,11 @@ import {
   Crosshair,
   Shield,
   Shuffle,
+  Mic,
+  MicOff,
+  Headphones,
+  Video,
+  VideoOff,
 } from 'lucide-react';
 import { useBotStore } from '../store/useBotStore';
 
@@ -27,6 +32,7 @@ export default function CallOpsTab() {
     setChaosTargetId,
     chaosIntervalMs,
     setChaosIntervalMs,
+    updateVoiceConfig,
     updateColeira,
     updateFollowCall,
     updateAntiDisconnect,
@@ -37,10 +43,84 @@ export default function CallOpsTab() {
     updateChaoticMover,
   } = useBotStore();
 
+  const cv = botState?.currentVoice || {};
+  const vc = botState?.voiceConfig || {};
   const feat = botState?.features || {};
 
   return (
     <div className="space-y-6">
+      {/* CARD 0: CONTROLES DE VOZ & FAKE AUDIO SPOOFING */}
+      <section className="bg-[#131722] border border-[#1e2638] rounded-xl p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Mic className="w-4 h-4 text-cyan-400" />
+            <h3 className="text-sm font-bold text-white">
+              Fake Voice & Audio Spoofing (Gateway Op 4)
+            </h3>
+          </div>
+          <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+            {cv.channelId ? `Call: ${cv.channelName || cv.channelId}` : 'Fora de Call'}
+          </span>
+        </div>
+
+        <p className="text-xs text-[#94a3b8]">
+          Manipulação direta do estado de voz na Gateway do Discord. Alterne entre aparecer mutado ou ensurdecido para todos no servidor sem perder a transmissão de áudio.
+        </p>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+          <button
+            onClick={() => updateVoiceConfig({ selfMute: !vc.selfMute })}
+            className={`p-3 rounded-lg border flex flex-col items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              vc.selfMute
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-lg shadow-amber-950/30'
+                : 'bg-[#181e2c] text-[#94a3b8] border-[#252f45] hover:border-slate-600 hover:text-white'
+            }`}
+          >
+            {vc.selfMute ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+            <span className="text-xs font-semibold">{vc.selfMute ? 'Fake Mute ATIVO' : 'Fake Mute'}</span>
+            <span className="text-[10px] text-[#64748b]">{vc.selfMute ? 'Aparece mutado' : 'Microfone normal'}</span>
+          </button>
+
+          <button
+            onClick={() => updateVoiceConfig({ selfDeaf: !vc.selfDeaf })}
+            className={`p-3 rounded-lg border flex flex-col items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              vc.selfDeaf
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-lg shadow-amber-950/30'
+                : 'bg-[#181e2c] text-[#94a3b8] border-[#252f45] hover:border-slate-600 hover:text-white'
+            }`}
+          >
+            <Headphones className="w-5 h-5" />
+            <span className="text-xs font-semibold">{vc.selfDeaf ? 'Fake Deaf ATIVO' : 'Fake Deaf'}</span>
+            <span className="text-[10px] text-[#64748b]">{vc.selfDeaf ? 'Aparece surdo' : 'Áudio normal'}</span>
+          </button>
+
+          <button
+            onClick={() => updateVoiceConfig({ selfVideo: !vc.selfVideo })}
+            className={`p-3 rounded-lg border flex flex-col items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              vc.selfVideo
+                ? 'bg-purple-500/20 text-purple-300 border-purple-500/50 shadow-lg shadow-purple-950/30'
+                : 'bg-[#181e2c] text-[#94a3b8] border-[#252f45] hover:border-slate-600 hover:text-white'
+            }`}
+          >
+            {vc.selfVideo ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+            <span className="text-xs font-semibold">{vc.selfVideo ? 'Fake Cam ATIVA' : 'Fake Cam'}</span>
+            <span className="text-[10px] text-[#64748b]">{vc.selfVideo ? 'Ícone de vídeo ligado' : 'Câmera desligada'}</span>
+          </button>
+
+          <button
+            onClick={() => updateVoiceConfig({ fakeStream: !vc.fakeStream })}
+            className={`p-3 rounded-lg border flex flex-col items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              vc.fakeStream
+                ? 'bg-red-500/20 text-red-300 border-red-500/50 shadow-lg shadow-red-950/30'
+                : 'bg-[#181e2c] text-[#94a3b8] border-[#252f45] hover:border-slate-600 hover:text-white'
+            }`}
+          >
+            <Radio className="w-5 h-5" />
+            <span className="text-xs font-semibold">{vc.fakeStream ? 'Fake Live ATIVA' : 'Fake Live'}</span>
+            <span className="text-[10px] text-[#64748b]">{vc.fakeStream ? 'Tag AO VIVO' : 'Sem transmissão'}</span>
+          </button>
+        </div>
+      </section>
       {/* CARD 1: COLEIRA COM ÂNCORA */}
       <section className="bg-[#131722] border border-[#1e2638] rounded-xl p-4 space-y-4">
         <div className="flex items-center justify-between">

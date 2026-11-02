@@ -107,6 +107,49 @@ export default function RadarTab() {
         </div>
       </section>
 
+      {/* BANNER DE CALL ATIVA */}
+      {currentVoice.channelId && (
+        <section className="bg-cyan-950/30 border border-cyan-500/40 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+            <div>
+              <div className="text-xs font-semibold text-white flex items-center gap-2">
+                <span>Conectado em:</span>
+                <span className="text-cyan-400 font-mono">{currentVoice.channelName || currentVoice.channelId}</span>
+                {currentVoice.guildName && (
+                  <span className="text-[#64748b]">({currentVoice.guildName})</span>
+                )}
+              </div>
+              <div className="text-[11px] text-[#94a3b8] flex items-center gap-2 mt-0.5">
+                <span>Mute: <strong className={botState?.voiceConfig?.selfMute ? 'text-amber-400' : 'text-slate-400'}>{botState?.voiceConfig?.selfMute ? 'Fake Mute ATIVO' : 'Aberto'}</strong></span>
+                <span>•</span>
+                <span>Deaf: <strong className={botState?.voiceConfig?.selfDeaf ? 'text-amber-400' : 'text-slate-400'}>{botState?.voiceConfig?.selfDeaf ? 'Fake Deaf ATIVO' : 'Normal'}</strong></span>
+                <span>•</span>
+                <span>Cam: <strong className={botState?.voiceConfig?.selfVideo ? 'text-purple-400' : 'text-slate-400'}>{botState?.voiceConfig?.selfVideo ? 'Ligada' : 'Desligada'}</strong></span>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => useBotStore.getState().updateVoiceConfig({ selfMute: !botState?.voiceConfig?.selfMute })}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border cursor-pointer transition-colors ${
+                botState?.voiceConfig?.selfMute
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                  : 'bg-[#181e2c] text-[#94a3b8] border-[#252f45] hover:text-white'
+              }`}
+            >
+              {botState?.voiceConfig?.selfMute ? 'Desmutar (Fake)' : 'Fake Mute'}
+            </button>
+            <button
+              onClick={() => useBotStore.getState().leaveVoice()}
+              className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/30 transition-colors cursor-pointer"
+            >
+              Desconectar
+            </button>
+          </div>
+        </section>
+      )}
+
       {/* Lista de canais de voz do servidor e membros em call */}
       <section className="bg-[#131722] border border-[#1e2638] rounded-xl p-4">
         <div className="flex flex-wrap items-center justify-between gap-2 mb-4">

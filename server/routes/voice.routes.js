@@ -99,18 +99,29 @@ router.post('/voice/config', (req, res) => {
   if (fakeStream !== undefined) bot.voiceConfig.fakeStream = Boolean(fakeStream);
   if (useIpcForAutoVoice !== undefined) bot.voiceConfig.useIpcForAutoVoice = Boolean(useIpcForAutoVoice);
 
-  const gId = bot.currentVoice.guildId || bot.voiceConfig.guildId;
-  const cId = bot.currentVoice.channelId || bot.voiceConfig.channelId;
+  // Descobre a localização atual na call (currentVoice > voiceConfig > userVoiceMap > selectedGuild)
+  const userLoc = bot.user ? bot.userVoiceMap.get(String(bot.user.id)) : null;
+  const gId = bot.currentVoice.guildId || bot.voiceConfig.guildId || userLoc?.guildId || bot.selectedGuildId || null;
+  const cId = bot.currentVoice.channelId || bot.voiceConfig.channelId || userLoc?.channelId || null;
 
   const voiceStateChanged = selfMute !== undefined || selfDeaf !== undefined || selfVideo !== undefined || fakeStream !== undefined;
 
   if (cId && voiceStateChanged) {
     bot.sendVoiceState(gId, cId);
+    bot.log(
+      'voice',
+      `[VOZ] Estado atualizado na call ${bot.getChannelLabel(gId, cId)} (mute=${bot.voiceConfig.selfMute}, deaf=${bot.voiceConfig.selfDeaf}, cam=${bot.voiceConfig.selfVideo}, live=${bot.voiceConfig.fakeStream})`
+    );
     if (bot.voiceConfig.fakeStream && !prevStream && gId) {
       bot.startFakeStream(gId, cId);
     } else if (!bot.voiceConfig.fakeStream && prevStream) {
       bot.stopFakeStream();
     }
+  } else if (!cId && voiceStateChanged) {
+    bot.log(
+      'voice',
+      `[VOZ PRE-CONFIG] Configurações alteradas (mute=${bot.voiceConfig.selfMute}, deaf=${bot.voiceConfig.selfDeaf}, cam=${bot.voiceConfig.selfVideo}). Serão aplicadas ao entrar em call.`
+    );
   }
 
   bot.broadcastState();

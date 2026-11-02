@@ -375,6 +375,19 @@ export class SelfbotEngine {
     const userId = String(vs.user_id);
     const channelId = vs.channel_id ? String(vs.channel_id) : null;
 
+    const record = {
+      userId,
+      guildId,
+      channelId,
+      mute: Boolean(vs.mute),
+      deaf: Boolean(vs.deaf),
+      selfMute: Boolean(vs.self_mute),
+      selfDeaf: Boolean(vs.self_deaf),
+      selfVideo: Boolean(vs.self_video),
+      selfStream: Boolean(vs.self_stream),
+      suppress: Boolean(vs.suppress),
+    };
+
     if (guildId) {
       let gMap = this.voiceStates.get(guildId);
       if (!gMap) {
@@ -382,17 +395,7 @@ export class SelfbotEngine {
         this.voiceStates.set(guildId, gMap);
       }
       if (channelId) {
-        gMap.set(userId, {
-          userId,
-          guildId,
-          channelId,
-          mute: Boolean(vs.mute),
-          deaf: Boolean(vs.deaf),
-          selfMute: Boolean(vs.self_mute),
-          selfDeaf: Boolean(vs.self_deaf),
-          selfVideo: Boolean(vs.self_video),
-          suppress: Boolean(vs.suppress),
-        });
+        gMap.set(userId, record);
       } else {
         gMap.delete(userId);
       }
@@ -403,6 +406,33 @@ export class SelfbotEngine {
     } else {
       this.userVoiceMap.delete(userId);
     }
+
+    // Sincroniza currentVoice e voiceConfig se a atualização for da nossa própria conta
+    if (this.user && userId === String(this.user.id)) {
+      this.currentVoice = {
+        guildId: channelId ? guildId : null,
+        channelId,
+        selfMute: record.selfMute,
+        selfDeaf: record.selfDeaf,
+        mute: record.mute,
+        deaf: record.deaf,
+        selfVideo: record.selfVideo,
+        selfStream: record.selfStream,
+      };
+
+      if (channelId) {
+        this.voiceConfig.channelId = channelId;
+        if (guildId) this.voiceConfig.guildId = guildId;
+      } else {
+        this.voiceConfig.channelId = null;
+        this.voiceConfig.guildId = null;
+      }
+      this.voiceConfig.selfMute = record.selfMute;
+      this.voiceConfig.selfDeaf = record.selfDeaf;
+      this.voiceConfig.selfVideo = record.selfVideo;
+    }
+
+    return record;
   }
 
   cacheUser(u) {

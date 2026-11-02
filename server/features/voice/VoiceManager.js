@@ -71,6 +71,11 @@ export class VoiceManager {
 
     this.voiceConfig.guildId = gId;
     this.voiceConfig.channelId = cId;
+    this.currentVoice.guildId = gId;
+    this.currentVoice.channelId = cId;
+    this.currentVoice.selfMute = Boolean(this.voiceConfig.selfMute);
+    this.currentVoice.selfDeaf = Boolean(this.voiceConfig.selfDeaf);
+    this.currentVoice.selfVideo = Boolean(this.voiceConfig.selfVideo);
 
     const sent = this.engine.gateway.sendOp(4, {
       guild_id: gId,
@@ -78,7 +83,7 @@ export class VoiceManager {
       self_mute: Boolean(this.voiceConfig.selfMute),
       self_deaf: Boolean(this.voiceConfig.selfDeaf),
       self_video: Boolean(this.voiceConfig.selfVideo),
-      flags: 2,
+      preferred_region: null,
     });
 
     if (sent && gId) {
@@ -205,6 +210,26 @@ export class VoiceManager {
 
     // 1. Atualizações na nossa própria conta
     if (isSelf) {
+      this.currentVoice.guildId = channelId ? guildId : null;
+      this.currentVoice.channelId = channelId;
+      this.currentVoice.selfMute = Boolean(d.self_mute);
+      this.currentVoice.selfDeaf = Boolean(d.self_deaf);
+      this.currentVoice.mute = Boolean(d.mute);
+      this.currentVoice.deaf = Boolean(d.deaf);
+      this.currentVoice.selfVideo = Boolean(d.self_video);
+      this.currentVoice.selfStream = Boolean(d.self_stream);
+
+      if (channelId) {
+        this.voiceConfig.channelId = channelId;
+        if (guildId) this.voiceConfig.guildId = guildId;
+      } else {
+        this.voiceConfig.channelId = null;
+        this.voiceConfig.guildId = null;
+      }
+      this.voiceConfig.selfMute = Boolean(d.self_mute);
+      this.voiceConfig.selfDeaf = Boolean(d.self_deaf);
+      this.voiceConfig.selfVideo = Boolean(d.self_video);
+
       if (this.features.antiMute.enabled && guildId && channelId) {
         const shouldUnmute = this.features.antiMute.unmute && d.mute;
         const shouldUndeaf = this.features.antiMute.undeaf && d.deaf;
