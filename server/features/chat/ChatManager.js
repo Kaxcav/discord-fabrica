@@ -316,3 +316,4 @@ export class ChatManager {
 function rawIdSafe(id) {
   return typeof id === 'string' && id.trim().length > 0;
 }
+

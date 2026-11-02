@@ -1,3 +1,5 @@
+import crypto from 'crypto';
+
 export const DISCORD_API = 'https://discord.com/api/v10';
 export const DISCORD_GW = 'wss://gateway.discord.gg/?v=10&encoding=json';
 export const STREAMKIT_CLIENT_ID = '207646673902501888';
@@ -74,3 +76,4 @@ export function sanitizeUser(user) {
 }
 
 export const delay = (ms) => new Promise((res) => setTimeout(res, ms));
+
