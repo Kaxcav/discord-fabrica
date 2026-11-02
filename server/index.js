@@ -19,8 +19,8 @@ const PORT = Number(process.env.PORT) || 3001;
 app.use(securityMiddleware);
 app.use(express.json({ limit: '10mb' }));
 
-// Proteção por PIN (se configurado)
-app.use(pinMiddleware);
+// Proteção por PIN (se configurado) — apenas rotas /api
+app.use('/api', pinMiddleware);
 
 // Middleware de sessões multi-usuário para rotas /api
 app.use('/api', resolveSession);

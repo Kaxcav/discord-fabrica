@@ -1,14 +1,8 @@
 export const PANEL_PIN = process.env.PANEL_PIN ? String(process.env.PANEL_PIN).trim() : '';
 
 export function pinMiddleware(req, res, next) {
-  // Endpoints públicos de validação de PIN
-  const fullPath = req.baseUrl ? `${req.baseUrl}${req.path}` : req.path;
-  if (
-    fullPath === '/api/panel/verify' ||
-    fullPath === '/api/panel/config' ||
-    req.path === '/panel/verify' ||
-    req.path === '/panel/config'
-  ) {
+  // Endpoints públicos — req.path é relativo a /api quando montado em /api
+  if (req.path === '/panel/verify' || req.path === '/panel/config') {
     return next();
   }
 
