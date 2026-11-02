@@ -187,7 +187,7 @@ export class SelfbotEngine {
     this.gateway.reconnectTimer = val;
   }
   get ipc() {
-    return this.ipcBridge.ipc;
+    return this.ipcBridge;
   }
 
   touch() {
