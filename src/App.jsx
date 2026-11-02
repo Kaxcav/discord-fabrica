@@ -69,6 +69,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('radar'); // radar | call_ops | presence_chat | factory | limpar_dm
   const [guildSearch, setGuildSearch] = useState('');
+  const [tokenList, setTokenList] = useState([]);
   // limpar-dm state
   const [limparDmTarget, setLimparDmTarget] = useState('');
   const [limparDmDelay, setLimparDmDelay] = useState(700);
