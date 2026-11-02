@@ -61,8 +61,8 @@ const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve
 
 let server = null;
 if (isMain) {
-  server = app.listen(PORT, () => {
-    console.log(`[Selfbot Engine v2] Servidor rodando em http://localhost:${PORT}`);
+  server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`[Selfbot Engine v2] Servidor rodando em http://0.0.0.0:${PORT}`);
   });
 }
 

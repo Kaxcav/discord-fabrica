@@ -54,6 +54,10 @@ export class DiscordIpcBridge {
     this.pending.clear();
   }
 
+  destroy() {
+    this.close();
+  }
+
   _writeIpcFrame(op, payload) {
     if (!this.socket || this.socket.destroyed) return false;
     const data = Buffer.from(JSON.stringify(payload), 'utf8');
