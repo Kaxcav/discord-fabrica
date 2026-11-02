@@ -1,16 +1,39 @@
-# React + Vite
+# Discord Fábrica
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Painel web para selfbot do Discord. Controle presença, voz, mensagens e DMs pelo navegador.
 
-Currently, two official plugins are available:
+## Funcionalidades
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Radar** — Monitora eventos de voz em tempo real
+- **Call Ops** — Controla entrada/saída de voz, anti-mute, anti-deaf
+- **Presence & Chat** — Altera status, activity, envia mensagens
+- **Fábrica Lote** — Automações em massa (factory loop)
+- **Limpar DM** — Apaga todas as suas mensagens de uma DM
 
-## React Compiler
+## Deploy no Railway (recomendado)
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+1. Fork este repositório
+2. Acesse [railway.app](https://railway.app) e crie um novo projeto a partir do GitHub
+3. Railway detecta automaticamente e roda `npm install && npm run build` + `node server.js`
+4. Abra a URL gerada pelo Railway no navegador
+5. Cole seu token do Discord na tela de login
 
-## Expanding the Oxlint configuration
+## Rodar localmente
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+```bash
+npm install
+npm run build
+node server.js
+```
+
+Acesse `http://localhost:3000`
+
+> **Dev mode** (hot reload do frontend): `npm run dev` (abre na porta 5173, mas as APIs ficam na 3000)
+
+## Variáveis de ambiente
+
+Nenhuma obrigatória. O servidor usa `PORT` se definido (Railway define automaticamente).
+
+## Aviso
+
+Este projeto usa selfbot (conta de usuário normal, não bot oficial). Viola os Termos de Serviço do Discord. Use por sua conta e risco.

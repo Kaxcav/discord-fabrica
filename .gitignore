@@ -7,12 +7,21 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Sensitive files
+tokens.log
+.env
+.env.*
+!.env.example
+
+# Dependencies
 node_modules
+
+# Build output (Railway builda na hora)
 dist
 dist-ssr
 *.local
 
-# Editor directories and files
+# Editor
 .vscode/*
 !.vscode/extensions.json
 .idea
