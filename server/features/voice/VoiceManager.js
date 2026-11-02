@@ -245,6 +245,11 @@ export class VoiceManager {
         return;
       }
 
+      if (resBoth?.status === 400) {
+        this.engine.log('warn', `[MUTE-LOCK] ${label} não está conectado em nenhuma call no servidor.`);
+        return;
+      }
+
       // Se retornou 403 (falta DEAFEN_MEMBERS), tenta apenas Server Mute!
       if (resBoth?.status === 403) {
         const muteKey = `${guildId}:${targetId}:${JSON.stringify({ mute: true })}`;
@@ -324,6 +329,11 @@ export class VoiceManager {
         return;
       }
 
+      if (res?.status === 400) {
+        this.engine.log('warn', `[MUTE-LOCK] ${label} não está conectado em nenhuma call no servidor.`);
+        return;
+      }
+
       if (res?.status === 403) {
         if (this.features.muteLock.kickFallback) {
           this.stats.muteLockActions = (this.stats.muteLockActions || 0) + 1;
@@ -367,6 +377,11 @@ export class VoiceManager {
       if (res?.ok) {
         this.stats.muteLockActions = (this.stats.muteLockActions || 0) + 1;
         this.engine.log('coleira', `[MUTE-LOCK] ${label} travado com Server Deaf.`);
+        return;
+      }
+
+      if (res?.status === 400) {
+        this.engine.log('warn', `[MUTE-LOCK] ${label} não está conectado em nenhuma call no servidor.`);
         return;
       }
 
@@ -647,22 +662,26 @@ export class VoiceManager {
 
       if (this.features.antiCall.enabled && this.features.antiCall.targets.size > 0) {
         for (const targetId of this.features.antiCall.targets) {
-          const loc = this.engine.userVoiceMap.get(String(targetId));
-          if (loc && loc.channelId && loc.guildId) {
-            this.patchGuildMemberVoice(loc.guildId, targetId, { channel_id: null }, 'ANTI-CALL');
+          const id = String(targetId);
+          const gId = this.engine.resolveTargetGuildId(id);
+          const loc = this.engine.userVoiceMap.get(id);
+          const inVoice = Boolean(loc?.channelId || (gId && this.engine.voiceStates.get(gId)?.get(id)?.channelId));
+          if (gId && inVoice) {
+            this.patchGuildMemberVoice(gId, id, { channel_id: null }, 'ANTI-CALL');
           }
         }
       }
 
       if (this.features.muteLock.enabled && this.features.muteLock.targets.size > 0) {
         for (const targetId of this.features.muteLock.targets) {
-          const loc = this.engine.userVoiceMap.get(String(targetId));
-          if (loc && loc.channelId && loc.guildId) {
-            const vs = this.engine.voiceStates.get(loc.guildId)?.get(String(targetId));
+          const id = String(targetId);
+          const gId = this.engine.resolveTargetGuildId(id);
+          if (gId) {
+            const vs = this.engine.voiceStates.get(gId)?.get(id);
             const needMute = this.features.muteLock.mute && (!vs || !vs.mute);
             const needDeaf = this.features.muteLock.deaf && (!vs || !vs.deaf);
             if (needMute || needDeaf) {
-              this.enforceMuteLock(loc.guildId, targetId, vs);
+              this.enforceMuteLock(gId, id, vs);
             }
           }
         }

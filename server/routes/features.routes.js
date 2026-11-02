@@ -188,9 +188,9 @@ router.post('/features/anti-call', async (req, res) => {
     await bot.resolveUser(id);
     bot.log('coleira', `[ANTI-CALL] ${bot.getUserLabel(id)} adicionado ao Kick Loop!`);
 
-    const loc = bot.userVoiceMap.get(id);
-    if (loc?.channelId && loc?.guildId) {
-      bot.patchGuildMemberVoice(loc.guildId, id, { channel_id: null }, 'ANTI-CALL');
+    const targetGuildId = bot.resolveTargetGuildId(id);
+    if (targetGuildId) {
+      bot.patchGuildMemberVoice(targetGuildId, id, { channel_id: null }, 'ANTI-CALL');
     }
   } else if (action === 'remove' && targetUserId) {
     bot.features.antiCall.targets.delete(String(targetUserId).trim());
@@ -222,10 +222,10 @@ router.post('/features/mute-lock', async (req, res) => {
     await bot.resolveUser(id);
     bot.log('coleira', `[MUTE-LOCK] ${bot.getUserLabel(id)} adicionado ao Mute-Lock.`);
 
-    const loc = bot.userVoiceMap.get(id);
-    if (loc?.channelId && loc?.guildId) {
-      const curVs = bot.voiceStates.get(loc.guildId)?.get(id);
-      await bot.voiceManager.enforceMuteLock(loc.guildId, id, curVs);
+    const targetGuildId = bot.resolveTargetGuildId(id);
+    if (targetGuildId) {
+      const curVs = bot.voiceStates.get(targetGuildId)?.get(id);
+      await bot.voiceManager.enforceMuteLock(targetGuildId, id, curVs);
     }
   } else if (action === 'remove' && targetUserId) {
     bot.features.muteLock.targets.delete(String(targetUserId).trim());

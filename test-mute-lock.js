@@ -216,7 +216,42 @@ async function run() {
       console.log('✓ 5. Watchdog de Mute-Lock monitora e reaplica mute em loop');
     }
 
-    console.log('\n[TEST RESULT] TODOS OS 5 TESTES DE MUTE-LOCK E KICK-LOOP PASSARAM COM SUCESSO! ✓\n');
+    // -------------------------------------------------------------------------
+    // TESTE 6: Mute-Lock funciona mesmo se o alvo NÃO estiver no cache userVoiceMap
+    // -------------------------------------------------------------------------
+    {
+      requests.length = 0;
+      bot.features.muteLock.targets.clear();
+      bot.features.muteLock.mute = true;
+      bot.features.muteLock.deaf = false;
+      bot.features.muteLock.kickFallback = true;
+
+      // Limpa totalmente o userVoiceMap para simular Gateway sem cache
+      bot.userVoiceMap.clear();
+
+      bot.request = async (method, url, body) => {
+        requests.push({ method, url, body });
+        return { ok: true, status: 200, data: {} };
+      };
+
+      const res = await fetch(`${baseUrl}/api/features/mute-lock`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ action: 'add', targetUserId: MOCK_TARGET_ID, mute: true, deaf: false }),
+      });
+      assert.equal(res.status, 200);
+
+      const muteReq = requests.find(
+        (r) =>
+          r.method === 'PATCH' &&
+          r.url === `/guilds/${MOCK_GUILD_ID}/members/${MOCK_TARGET_ID}` &&
+          r.body?.mute === true
+      );
+      assert.ok(muteReq, 'Deve resolver a guild e disparar PATCH { mute: true } mesmo sem userVoiceMap');
+      console.log('✓ 6. Mute-Lock dispara PATCH imediatamente mesmo sem cache prévio de userVoiceMap');
+    }
+
+    console.log('\n[TEST RESULT] TODOS OS 6 TESTES DE MUTE-LOCK E KICK-LOOP PASSARAM COM SUCESSO! ✓\n');
   } finally {
     const bot = sessions.get(SID);
     if (bot) { try { bot.destroy(); } catch {} sessions.delete(SID); }

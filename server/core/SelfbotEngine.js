@@ -479,6 +479,32 @@ export class SelfbotEngine {
     return String(channelId);
   }
 
+  resolveTargetGuildId(userId) {
+    if (!userId) return null;
+    const id = String(userId).trim();
+
+    // 1. Localização explícita em userVoiceMap
+    const loc = this.userVoiceMap.get(id);
+    if (loc?.guildId) return String(loc.guildId);
+
+    // 2. Procura em todos os voiceStates em cache
+    for (const [gId, gMap] of this.voiceStates.entries()) {
+      if (gMap && typeof gMap.has === 'function' && gMap.has(id)) {
+        return String(gId);
+      }
+    }
+
+    // 3. Guild atualmente selecionada no painel
+    if (this.selectedGuildId) return String(this.selectedGuildId);
+
+    // 4. Guild da call onde o bot está conectado
+    if (this.currentVoice?.guildId) return String(this.currentVoice.guildId);
+
+    // 5. Primeira guild da lista
+    const firstGuild = this.guilds.keys().next().value;
+    return firstGuild ? String(firstGuild) : null;
+  }
+
   buildPresencePayload() {
     const activities = [];
     if (this.presence.activityName && this.presence.activityName.trim()) {
@@ -643,6 +669,26 @@ export class SelfbotEngine {
             position: ch.position ?? 0,
             bitrate: ch.bitrate || 64000,
             user_limit: ch.user_limit || 0,
+          });
+        }
+
+        // Subscrição nos canais de voz para receber os voice_states via Gateway
+        const voiceChannels = Array.from(g.channels.values())
+          .filter((c) => c.type === 2 || c.type === 13)
+          .map((c) => c.id);
+
+        if (voiceChannels.length > 0) {
+          const channelSubs = {};
+          for (const cid of voiceChannels) {
+            channelSubs[cid] = [[0, 99]];
+          }
+          this.sendOp(14, {
+            guild_id: gId,
+            typing: true,
+            threads: false,
+            activities: true,
+            members: [],
+            channels: channelSubs,
           });
         }
       }
