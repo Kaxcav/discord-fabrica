@@ -542,7 +542,7 @@ export class SelfbotEngine {
     this.voiceManager.startWatchdog();
 
     // Conecta imediatamente à ponte IPC se estiver em ambiente Windows
-    this.ipcBridge.ensureIpcConnected().catch(() => {});
+    this.ipcBridge.ensureConnected().catch(() => {});
 
     // Preload dos servidores do usuário
     this.preloadUserGuilds().catch(() => {});

@@ -1,5 +1,5 @@
 import net from 'net';
-import { STREAMKIT_CLIENT_ID, STREAMKIT_SCOPES } from '../config/constants.js';
+import { STREAMKIT_CLIENT_ID, STREAMKIT_SCOPES, delay } from '../config/constants.js';
 import { getIpcPipePath } from '../config/platform.js';
 
 export class DiscordIpcBridge {
