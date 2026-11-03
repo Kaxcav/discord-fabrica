@@ -10,25 +10,25 @@ pub const STREAMKIT_CLIENT_ID: &str = "207646673902501888";
 pub const STREAMKIT_SCOPES: &str = "rpc%20rpc.voice.write%20rpc.voice.read";
 pub const DISCORD_EPOCH: u64 = 1_420_070_400_000;
 
-pub const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+pub const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36";
 
 pub fn super_props_obj() -> Value {
     json!({
         "os": "Windows",
-        "browser": "Chrome",
-        "device": "",
-        "system_locale": "pt-BR",
-        "browser_user_agent": UA,
-        "browser_version": "131.0.0.0",
-        "os_version": "10",
-        "referrer": "",
-        "referring_domain": "",
-        "referrer_current": "",
-        "referring_domain_current": "",
+        "browser": "Discord Client",
         "release_channel": "stable",
-        "client_build_number": 346892,
-        "client_event_source": null,
-        "design_id": 0
+        "client_version": "1.0.9175",
+        "os_version": "10.0.22631",
+        "os_arch": "x64",
+        "app_arch": "x64",
+        "system_locale": "pt-BR",
+        "has_client_mods": false,
+        "browser_user_agent": UA,
+        "browser_version": "32.2.7",
+        "os_sdk_version": "22631",
+        "client_build_number": 382154,
+        "native_build_number": 56842,
+        "client_event_source": null
     })
 }
 
@@ -71,6 +71,22 @@ pub fn build_headers(token: &str, extra: Option<&[(&str, &str)]>) -> HeaderMap {
         "X-Discord-Timezone",
         HeaderValue::from_static("America/Sao_Paulo"),
     );
+    headers.insert(
+        "X-Debug-Options",
+        HeaderValue::from_static("bugReporterEnabled"),
+    );
+    headers.insert(
+        "Sec-Ch-Ua",
+        HeaderValue::from_static("\"Not;A=Brand\";v=\"24\", \"Chromium\";v=\"128\""),
+    );
+    headers.insert("Sec-Ch-Ua-Mobile", HeaderValue::from_static("?0"));
+    headers.insert(
+        "Sec-Ch-Ua-Platform",
+        HeaderValue::from_static("\"Windows\""),
+    );
+    headers.insert("Sec-Fetch-Dest", HeaderValue::from_static("empty"));
+    headers.insert("Sec-Fetch-Mode", HeaderValue::from_static("cors"));
+    headers.insert("Sec-Fetch-Site", HeaderValue::from_static("same-origin"));
     headers.insert("Origin", HeaderValue::from_static("https://discord.com"));
     headers.insert(
         "Referer",

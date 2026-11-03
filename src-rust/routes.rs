@@ -350,18 +350,18 @@ async fn get_tokens_scan(
     let mut validated = Vec::with_capacity(tokens.len());
     let mut valid_tokens = Vec::new();
 
-    let futs = tokens.iter().map(|t| {
-        let bot_ref = Arc::clone(&bot);
-        let tok = t.clone();
-        async move {
-            let r = bot_ref
-                .request_with_token(&tok, "GET", "/users/@me", None, None, 0)
-                .await;
-            (tok, r)
+    // Valida no máximo os 3 tokens mais recentes com intervalo suave de 120ms para evitar rate-limit
+    for (idx, t) in tokens.iter().enumerate() {
+        if idx >= 3 {
+            validated.push(json!({ "token": t, "valid": false }));
+            continue;
         }
-    });
-
-    for (t, r) in futures_util::future::join_all(futs).await {
+        if idx > 0 {
+            tokio::time::sleep(Duration::from_millis(120)).await;
+        }
+        let r = bot
+            .request_with_token(t, "GET", "/users/@me", None, None, 0)
+            .await;
         if r.ok {
             if let Some(id) = r.data.get("id").and_then(|v| v.as_str()) {
                 let uname = r
@@ -750,7 +750,7 @@ async fn post_voice_ipc_register(
     let cur_vc = body.get("currentVoiceChannel");
 
     let bots = resolve_ipc_target_bots(&state, &headers, &query, user_id.as_deref());
-    let mut access_token: Option<String> = None;
+    let access_token: Option<String> = None;
     let mut anti_disconnect: Option<Value> = None;
     let mut pending = Vec::new();
 
@@ -758,6 +758,10 @@ async fn post_voice_ipc_register(
         let was_active = bot.ipc.is_remote_active();
         bot.ipc.remote_connected.store(true, Ordering::Relaxed);
         bot.ipc.remote_last_seen.store(now_ms(), Ordering::Relaxed);
+        if !was_active {
+            // Limpa comandos antigos acumulados antes do local-bridge abrir para nunca desconectar o usuário
+            bot.ipc.remote_pending.lock().clear();
+        }
         if let Some(ref u) = user {
             *bot.ipc.remote_desktop_user.lock() = Some(u.clone());
         }
@@ -791,7 +795,9 @@ async fn post_voice_ipc_register(
                         .insert(uid, (gid.clone(), cid.clone()));
                 }
                 let mut f = bot.features.write();
-                if f.anti_disconnect.enabled && f.anti_disconnect.channel_id.is_none() {
+                if f.anti_disconnect.enabled
+                    && (f.anti_disconnect.channel_id.is_none() || !was_active)
+                {
                     f.anti_disconnect.guild_id = g_id;
                     f.anti_disconnect.channel_id = Some(cid);
                 }
@@ -806,12 +812,6 @@ async fn post_voice_ipc_register(
                 ),
             );
             bot.broadcast_state();
-        }
-        if access_token.is_none() && bot.token.read().is_some() {
-            access_token = bot
-                .ipc
-                .get_rpc_access_token(false, user_id.as_deref())
-                .await;
         }
         let ad = bot.features.read().anti_disconnect.clone();
         if ad.enabled && ad.channel_id.is_some() {
@@ -837,15 +837,12 @@ async fn get_voice_ipc_pending(
     let target_uid = query.get("userId").map(|s| s.as_str());
     let bots = resolve_ipc_target_bots(&state, &headers, &query, target_uid);
     let mut pending = Vec::new();
-    let mut access_token: Option<String> = None;
+    let access_token: Option<String> = None;
     let mut anti_disconnect: Option<Value> = None;
 
     for bot in &bots {
         bot.ipc.remote_connected.store(true, Ordering::Relaxed);
         bot.ipc.remote_last_seen.store(now_ms(), Ordering::Relaxed);
-        if access_token.is_none() && bot.token.read().is_some() {
-            access_token = bot.ipc.get_rpc_access_token(false, target_uid).await;
-        }
         let ad = bot.features.read().anti_disconnect.clone();
         if ad.enabled && ad.channel_id.is_some() {
             anti_disconnect = serde_json::to_value(ad).ok();

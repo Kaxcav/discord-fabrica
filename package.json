@@ -7,9 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "start": "node server.js",
-    "start:rust": "cargo run --release --bin discord-fabrica",
-    "bridge": "node server/ipc/local-bridge.js",
-    "bridge:rust": "cargo run --release --bin local-bridge",
+    "start:rust": ".\\target\\release\\discord-fabrica.exe",
+    "bridge": ".\\target\\release\\local-bridge.exe",
+    "bridge:node": "node server/ipc/local-bridge.js",
+    "bridge:rust": ".\\target\\release\\local-bridge.exe",
     "lint": "oxlint",
     "test": "node test-multi-session.js",
     "preview": "vite preview"

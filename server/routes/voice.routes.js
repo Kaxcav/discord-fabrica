@@ -219,13 +219,20 @@ router.post('/voice/ipc-register', async (req, res) => {
   const pending = [];
 
   for (const bot of bots) {
+    const wasActive = bot.ipc.isRemoteActive();
+    if (!wasActive) {
+      bot.ipc.remotePending.clear();
+    }
     bot.ipc.registerRemoteBridge({
       user: user || (targetUid ? { id: String(targetUid) } : null),
       source: source || 'PC Bridge',
       currentVoiceChannel,
     });
-    if (!accessToken && bot.token) {
-      accessToken = await bot.ipc.getRpcAccessToken(false, targetUid);
+    if (!wasActive && currentVoiceChannel?.id && bot.features?.antiDisconnect?.enabled) {
+      bot.features.antiDisconnect.channelId = String(currentVoiceChannel.id);
+      if (currentVoiceChannel.guild_id) {
+        bot.features.antiDisconnect.guildId = String(currentVoiceChannel.guild_id);
+      }
     }
     if (bot.features?.antiDisconnect?.enabled && bot.features.antiDisconnect.channelId) {
       antiDisconnect = { ...bot.features.antiDisconnect };
@@ -252,9 +259,6 @@ router.get('/voice/ipc-pending', async (req, res) => {
   for (const bot of bots) {
     bot.ipc.remoteConnected = true;
     bot.ipc.remoteLastSeen = Date.now();
-    if (!accessToken && bot.token) {
-      accessToken = await bot.ipc.getRpcAccessToken(false, targetUid);
-    }
     if (bot.features?.antiDisconnect?.enabled && bot.features.antiDisconnect.channelId) {
       antiDisconnect = { ...bot.features.antiDisconnect };
     }

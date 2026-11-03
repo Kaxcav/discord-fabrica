@@ -88,7 +88,70 @@ pub struct DiscordIpcBridge {
     pub on_dispatch: Mutex<Option<DispatchCallback>>,
     pub on_ipc_request_sse: Mutex<Option<Arc<dyn Fn(Value) + Send + Sync>>>,
     pub last_local_fail_ts: AtomicU64,
+    pub last_oauth_attempt_ts: AtomicU64,
     connect_lock: tokio::sync::Mutex<()>,
+}
+
+fn rpc_cache_file_path() -> std::path::PathBuf {
+    let base = std::env::var("LOCALAPPDATA")
+        .or_else(|_| std::env::var("TEMP"))
+        .unwrap_or_else(|_| ".".to_string());
+    std::path::Path::new(&base).join("discord-fabrica-rpc-cache.json")
+}
+
+fn load_disk_rpc_token(user_id: &str) -> Option<String> {
+    if user_id.is_empty() {
+        return None;
+    }
+    let raw = std::fs::read_to_string(rpc_cache_file_path()).ok()?;
+    let parsed: Value = serde_json::from_str(&raw).ok()?;
+    let entry = parsed.get(user_id)?;
+    let expires_at = entry.get("expires_at")?.as_u64()?;
+    if now_ms() >= expires_at {
+        return None;
+    }
+    entry
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+fn save_disk_rpc_token(user_id: &str, access_token: &str) {
+    if user_id.is_empty() || access_token.is_empty() {
+        return;
+    }
+    let path = rpc_cache_file_path();
+    let mut map = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+    // Validade de 6 dias (OAuth2 RPC token do Discord dura 7 dias)
+    map.insert(
+        user_id.to_string(),
+        json!({
+            "access_token": access_token,
+            "expires_at": now_ms() + 518_400_000,
+        }),
+    );
+    let _ = std::fs::write(path, Value::Object(map).to_string());
+}
+
+fn clear_disk_rpc_token(user_id: &str) {
+    if user_id.is_empty() {
+        return;
+    }
+    let path = rpc_cache_file_path();
+    if let Some(mut map) = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .and_then(|v| v.as_object().cloned())
+    {
+        if map.remove(user_id).is_some() {
+            let _ = std::fs::write(path, Value::Object(map).to_string());
+        }
+    }
 }
 
 impl DiscordIpcBridge {
@@ -112,6 +175,7 @@ impl DiscordIpcBridge {
             on_dispatch: Mutex::new(None),
             on_ipc_request_sse: Mutex::new(None),
             last_local_fail_ts: AtomicU64::new(0),
+            last_oauth_attempt_ts: AtomicU64::new(0),
             connect_lock: tokio::sync::Mutex::new(()),
         })
     }
@@ -164,7 +228,10 @@ impl DiscordIpcBridge {
     }
 
     pub fn get_pending_remote_commands(&self) -> Vec<Value> {
-        let rpend = self.remote_pending.lock();
+        let now = now_ms();
+        let mut rpend = self.remote_pending.lock();
+        // Descarta comandos antigos (>3500ms) para nunca executar ações atrasadas ao abrir o local-bridge
+        rpend.retain(|_, e| now.saturating_sub(e.created_at) <= 3_500);
         rpend
             .values()
             .map(|e| {
@@ -231,34 +298,11 @@ impl DiscordIpcBridge {
         force_refresh: bool,
         desktop_user_id: Option<&str>,
     ) -> Option<String> {
-        let eng_tok = self.engine_token.lock().clone();
-        let owner_key = eng_tok.clone().unwrap_or_else(|| "local".to_string());
-
-        if !force_refresh {
-            let cached = self.access_token.lock().clone();
-            let cur_owner = self.token_owner.lock().clone();
-            if cached.is_some() && cur_owner.as_deref() == Some(owner_key.as_str()) {
-                return cached;
-            }
+        // SEGURANÇA MÁXIMA: NUNCA executar OAuth2 authorize a partir de servidor Linux/Datacenter (Railway)
+        if !cfg!(windows) {
+            return None;
         }
 
-        let eng_uid = self.engine_user_id.lock().clone();
-        let engine_matches_desktop = match (desktop_user_id, eng_uid.as_deref()) {
-            (Some(d_id), Some(e_id)) => d_id == e_id,
-            _ => true,
-        };
-
-        if let Some(ref tok) = eng_tok {
-            if engine_matches_desktop {
-                if let Some(access) = self.authorize_with_token(tok).await {
-                    *self.access_token.lock() = Some(access.clone());
-                    *self.token_owner.lock() = Some(owner_key);
-                    return Some(access);
-                }
-            }
-        }
-
-        let local_tokens = scan_local_tokens(force_refresh);
         let target_uid = desktop_user_id
             .map(|s| s.to_string())
             .or_else(|| {
@@ -268,32 +312,74 @@ impl DiscordIpcBridge {
                     .and_then(|u| u.get("id"))
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
-            });
+            })
+            .or_else(|| self.engine_user_id.lock().clone());
 
-        let expected_prefix = target_uid.as_ref().map(|uid| B64_NOPAD.encode(uid.as_bytes()));
+        let eng_tok = self.engine_token.lock().clone();
+        let owner_key = target_uid
+            .clone()
+            .or_else(|| eng_tok.clone())
+            .unwrap_or_else(|| "local".to_string());
 
-        let mut sorted = Vec::with_capacity(local_tokens.len());
-        if let Some(ref pref) = expected_prefix {
-            let dot_pref = format!("{}.", pref);
-            for t in &local_tokens {
-                if t.starts_with(&dot_pref) {
-                    sorted.push(t.clone());
+        if !force_refresh {
+            let cached = self.access_token.lock().clone();
+            let cur_owner = self.token_owner.lock().clone();
+            if cached.is_some() && cur_owner.as_deref() == Some(owner_key.as_str()) {
+                return cached;
+            }
+            if let Some(ref uid) = target_uid {
+                if let Some(disk_tok) = load_disk_rpc_token(uid) {
+                    *self.access_token.lock() = Some(disk_tok.clone());
+                    *self.token_owner.lock() = Some(owner_key);
+                    return Some(disk_tok);
                 }
             }
-            for t in &local_tokens {
-                if !t.starts_with(&dot_pref) {
-                    sorted.push(t.clone());
-                }
-            }
-        } else {
-            sorted = local_tokens;
+        } else if let Some(ref uid) = target_uid {
+            clear_disk_rpc_token(uid);
         }
 
-        for candidate in sorted {
-            if eng_tok.as_deref() == Some(candidate.as_str()) && engine_matches_desktop {
-                continue;
+        // Cooldown rígido de 180s entre chamadas POST /oauth2/authorize para proteger a conta
+        let now = now_ms();
+        let last_try = self.last_oauth_attempt_ts.load(Ordering::Relaxed);
+        if last_try > 0 && now.saturating_sub(last_try) < 180_000 {
+            return None;
+        }
+        self.last_oauth_attempt_ts.store(now, Ordering::Relaxed);
+
+        let eng_uid = self.engine_user_id.lock().clone();
+        let engine_matches_desktop = match (target_uid.as_deref(), eng_uid.as_deref()) {
+            (Some(d_id), Some(e_id)) => d_id == e_id,
+            _ => true,
+        };
+
+        if let Some(ref tok) = eng_tok {
+            if engine_matches_desktop {
+                if let Some(access) = self.authorize_with_token(tok).await {
+                    if let Some(ref uid) = target_uid {
+                        save_disk_rpc_token(uid, &access);
+                    }
+                    *self.access_token.lock() = Some(access.clone());
+                    *self.token_owner.lock() = Some(owner_key);
+                    return Some(access);
+                }
+                return None;
             }
+        }
+
+        // Busca exclusivamente tokens cujo prefixo Base64 corresponde ao user_id do Discord Desktop local
+        let Some(ref uid) = target_uid else {
+            return None;
+        };
+        let dot_pref = format!("{}.", B64_NOPAD.encode(uid.as_bytes()));
+        let local_tokens = scan_local_tokens(false);
+
+        for candidate in local_tokens
+            .into_iter()
+            .filter(|t| t.starts_with(&dot_pref))
+            .take(3)
+        {
             if let Some(access) = self.authorize_with_token(&candidate).await {
+                save_disk_rpc_token(uid, &access);
                 *self.access_token.lock() = Some(access.clone());
                 *self.token_owner.lock() = Some(owner_key);
                 return Some(access);
@@ -511,6 +597,10 @@ impl DiscordIpcBridge {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let had_fresh_oauth_before = self.last_oauth_attempt_ts.load(Ordering::Relaxed);
+
         // 2. Authenticate
         let mut token = self
             .get_rpc_access_token(false, desktop_uid.as_deref())
@@ -524,7 +614,10 @@ impl DiscordIpcBridge {
             auth_ok = res.ok;
         }
 
-        if !auth_ok {
+        // Só renova se o token veio do cache em disco e foi rejeitado pelo pipe local
+        let was_from_cache =
+            token.is_some() && self.last_oauth_attempt_ts.load(Ordering::Relaxed) == had_fresh_oauth_before;
+        if !auth_ok && was_from_cache {
             token = self
                 .get_rpc_access_token(true, desktop_uid.as_deref())
                 .await;

@@ -31,6 +31,7 @@ struct BridgeState {
     http: reqwest::Client,
     remote_url: String,
     panel_pin: String,
+    started_at: u64,
     cached_voice: Arc<Mutex<Option<Value>>>,
     last_voice_fetch_ts: Arc<AtomicU64>,
     subscribed_mode: Arc<Mutex<Option<String>>>,
@@ -258,6 +259,16 @@ async fn handle_pending_list(st: &BridgeState, pending_list: Option<&Vec<Value>>
 
         let cmd = item.get("cmd").and_then(|v| v.as_str()).unwrap_or("");
         let args = item.get("args").cloned().unwrap_or_else(|| json!({}));
+        let created_at = item.get("createdAt").and_then(|v| v.as_u64()).unwrap_or(0);
+        let now = now_ms();
+
+        // Ignora comandos antigos (>3500ms) ou SELECT_VOICE_CHANNEL durante os primeiros 5s de startup
+        if (created_at > 0 && now.saturating_sub(created_at) > 3_500)
+            || (cmd == "SELECT_VOICE_CHANNEL" && now.saturating_sub(st.started_at) < 5_000)
+        {
+            continue;
+        }
+
         let access_token = item
             .get("accessToken")
             .and_then(|v| v.as_str())
@@ -397,6 +408,16 @@ async fn main() {
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(6473);
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    // Single-Instance Lock: garante que abrir um segundo local-bridge NUNCA toque no pipe do Discord Desktop
+    let Ok(listener) = TcpListener::bind(addr).await else {
+        println!(
+            "[PC BRIDGE RUST] Já existe uma instância ativa em http://127.0.0.1:{}. Encerrando em segurança sem tocar no Discord.",
+            port
+        );
+        return;
+    };
+
     let remote_url = env::var("REMOTE_PANEL_URL")
         .unwrap_or_else(|_| "https://discord-fabrica-production.up.railway.app".to_string())
         .trim_end_matches('/')
@@ -414,6 +435,7 @@ async fn main() {
         http,
         remote_url,
         panel_pin,
+        started_at: now_ms(),
         cached_voice: Arc::new(Mutex::new(None)),
         last_voice_fetch_ts: Arc::new(AtomicU64::new(0)),
         subscribed_mode: Arc::new(Mutex::new(None)),
@@ -453,6 +475,11 @@ async fn main() {
             .last_voice_fetch_ts
             .store(now_ms(), Ordering::Relaxed);
         st_dispatch.last_register_ts.store(0, Ordering::Relaxed);
+
+        // Grace period de 5s no startup para nunca puxar/desconectar ao iniciar o bridge
+        if now_ms().saturating_sub(st_dispatch.started_at) < 5_000 {
+            return;
+        }
 
         let ad_opt = st_dispatch.remote_anti_disconnect.lock().clone();
         if let Some(ad) = ad_opt {
@@ -543,7 +570,7 @@ async fn main() {
     tokio::spawn(async move {
         loop {
             sync_with_remote_panel(&st_loop).await;
-            sleep(Duration::from_millis(350)).await;
+            sleep(Duration::from_millis(900)).await;
         }
     });
 
@@ -557,10 +584,6 @@ async fn main() {
         .layer(middleware::from_fn(cors_middleware))
         .with_state(state);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let listener = TcpListener::bind(addr)
-        .await
-        .expect("Falha ao abrir porta 6473");
     axum::serve(listener, app)
         .await
         .expect("Erro no servidor HTTP local-bridge");

