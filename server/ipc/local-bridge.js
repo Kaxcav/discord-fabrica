@@ -10,6 +10,15 @@ const PANEL_PIN = process.env.PANEL_PIN || '';
 const ipc = new DiscordIpcBridge(null);
 const executedRequests = new Set();
 
+let cachedVoiceChannel = null;
+let lastVoiceFetchTs = 0;
+let subscribedPipeKey = null;
+let remoteAntiDisconnect = null;
+let localReconnectTimer = null;
+let lastVoiceSelect = { channelId: undefined, ts: 0 };
+let syncInFlight = false;
+let lastRegisterTs = 0;
+
 function setCorsHeaders(req, res) {
   const origin = req.headers.origin || '*';
   res.setHeader('Access-Control-Allow-Origin', origin);
@@ -18,18 +27,81 @@ function setCorsHeaders(req, res) {
   res.setHeader('Access-Control-Allow-Private-Network', 'true');
 }
 
-async function getCurrentDesktopVoice() {
+async function ensureVoiceSubscription() {
   const ready = await ipc.ensureConnected();
-  if (!ready) return null;
-  const res = await ipc.sendCommand('GET_SELECTED_VOICE_CHANNEL', {}, 2500);
-  if (res.ok && res.data) {
-    return {
-      id: res.data.id || null,
-      name: res.data.name || null,
-      guild_id: res.data.guild_id || null,
-    };
+  if (!ready) {
+    subscribedPipeKey = null;
+    return false;
   }
-  return null;
+  const modeKey = ipc.getMode();
+  if (subscribedPipeKey !== modeKey) {
+    subscribedPipeKey = modeKey;
+    await ipc.subscribe('VOICE_CHANNEL_SELECT');
+  }
+  return true;
+}
+
+ipc.onDispatch = (evt, data) => {
+  if (evt !== 'VOICE_CHANNEL_SELECT') return;
+  const channelId = data?.channel_id ? String(data.channel_id) : null;
+  const guildId = data?.guild_id ? String(data.guild_id) : null;
+
+  cachedVoiceChannel = channelId
+    ? { id: channelId, guild_id: guildId, name: null }
+    : null;
+  lastVoiceFetchTs = Date.now();
+  // Força próximo ciclo a sincronizar estado atualizado com o painel remoto
+  lastRegisterTs = 0;
+
+  if (remoteAntiDisconnect?.enabled && remoteAntiDisconnect?.channelId) {
+    const lockCh = String(remoteAntiDisconnect.channelId);
+    const wasDisconnected = !channelId;
+    const wasMoved =
+      Boolean(channelId) &&
+      channelId !== lockCh &&
+      remoteAntiDisconnect.rejoinOnMove !== false;
+
+    if (wasDisconnected || wasMoved) {
+      const waitMs = Math.min(250, Math.max(15, Number(remoteAntiDisconnect.delayMs) || 60));
+      if (localReconnectTimer) clearTimeout(localReconnectTimer);
+      localReconnectTimer = setTimeout(async () => {
+        localReconnectTimer = null;
+        if (!remoteAntiDisconnect?.enabled || !remoteAntiDisconnect?.channelId) return;
+        const targetCh = String(remoteAntiDisconnect.channelId);
+        if (cachedVoiceChannel?.id === targetCh) return;
+        const out = await executeIpcCommand('SELECT_VOICE_CHANNEL', {
+          channel_id: targetCh,
+          force: true,
+        });
+        console.log(
+          `[PC BRIDGE] Anti-Disconnect Local Instantâneo -> canal ${targetCh} (ok=${out.ok})`
+        );
+      }, waitMs);
+    }
+  }
+};
+
+async function getCurrentDesktopVoice(forceRefresh = false) {
+  const ready = await ensureVoiceSubscription();
+  if (!ready) return null;
+
+  const now = Date.now();
+  if (!forceRefresh && lastVoiceFetchTs > 0 && now - lastVoiceFetchTs < 45000) {
+    return cachedVoiceChannel;
+  }
+
+  const res = await ipc.sendCommand('GET_SELECTED_VOICE_CHANNEL', {}, 2500);
+  lastVoiceFetchTs = Date.now();
+  if (res.ok) {
+    cachedVoiceChannel = res.data?.id
+      ? {
+          id: String(res.data.id),
+          name: res.data.name || null,
+          guild_id: res.data.guild_id ? String(res.data.guild_id) : null,
+        }
+      : null;
+  }
+  return cachedVoiceChannel;
 }
 
 async function executeIpcCommand(cmd, args = {}, accessToken = null) {
@@ -37,7 +109,26 @@ async function executeIpcCommand(cmd, args = {}, accessToken = null) {
     ipc.accessToken = accessToken;
     ipc.tokenOwner = 'local';
   }
-  return ipc.sendCommand(cmd, args, 4000);
+  await ensureVoiceSubscription();
+
+  if (cmd === 'SELECT_VOICE_CHANNEL') {
+    const targetCh = args?.channel_id ? String(args.channel_id) : null;
+    const now = Date.now();
+    if (lastVoiceSelect.channelId === targetCh && now - lastVoiceSelect.ts < 650) {
+      return { ok: true, deduplicated: true, data: { id: targetCh } };
+    }
+    lastVoiceSelect = { channelId: targetCh, ts: now };
+    cachedVoiceChannel = targetCh
+      ? {
+          id: targetCh,
+          guild_id: cachedVoiceChannel?.guild_id || remoteAntiDisconnect?.guildId || null,
+          name: cachedVoiceChannel?.name || null,
+        }
+      : null;
+    lastVoiceFetchTs = now;
+  }
+
+  return ipc.sendCommand(cmd, args, 3500);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -126,21 +217,22 @@ async function handlePendingList(pendingList, remoteHeaders) {
   }
 }
 
-let lastRegisterTs = 0;
 async function syncWithRemotePanel() {
-  const connected = await ipc.ensureConnected();
-  if (!connected) return;
-
-  const remoteHeaders = {
-    'Content-Type': 'application/json',
-    'x-ipc-bridge': '1',
-    ...(PANEL_PIN ? { 'x-panel-pin': PANEL_PIN } : {}),
-  };
-
-  const now = Date.now();
-  const userId = ipc.remoteDesktopUser?.id || '';
-
+  if (syncInFlight) return;
+  syncInFlight = true;
   try {
+    const connected = await ensureVoiceSubscription();
+    if (!connected) return;
+
+    const remoteHeaders = {
+      'Content-Type': 'application/json',
+      'x-ipc-bridge': '1',
+      ...(PANEL_PIN ? { 'x-panel-pin': PANEL_PIN } : {}),
+    };
+
+    const now = Date.now();
+    const userId = ipc.remoteDesktopUser?.id || '';
+
     if (now - lastRegisterTs > 12000) {
       lastRegisterTs = now;
       const currentVoiceChannel = await getCurrentDesktopVoice();
@@ -160,6 +252,9 @@ async function syncWithRemotePanel() {
           ipc.accessToken = data.accessToken;
           ipc.tokenOwner = 'local';
         }
+        if ('antiDisconnect' in data) {
+          remoteAntiDisconnect = data.antiDisconnect;
+        }
         await handlePendingList(data.pending, remoteHeaders);
       }
     } else {
@@ -176,15 +271,20 @@ async function syncWithRemotePanel() {
           ipc.accessToken = data.accessToken;
           ipc.tokenOwner = 'local';
         }
+        if ('antiDisconnect' in data) {
+          remoteAntiDisconnect = data.antiDisconnect;
+        }
         await handlePendingList(data.pending, remoteHeaders);
       }
     }
-  } catch {}
+  } catch {} finally {
+    syncInFlight = false;
+  }
 }
 
 server.listen(BRIDGE_PORT, '127.0.0.1', async () => {
   console.log(`[PC BRIDGE] Servidor local ativo em http://127.0.0.1:${BRIDGE_PORT}`);
-  const ok = await ipc.ensureConnected();
+  const ok = await ensureVoiceSubscription();
   if (ok) {
     console.log(
       `[PC BRIDGE] Conectado ao Discord Desktop (${ipc.getMode()}) como ${ipc.remoteDesktopUser?.username || 'usuário local'}`

@@ -28,6 +28,7 @@ export class DiscordIpcBridge {
     this.remoteLastSeen = 0;
     this.remoteDesktopUser = null;
     this.remotePending = new Map();
+    this.onDispatch = null;
   }
 
   isRemoteActive() {
@@ -174,7 +175,19 @@ export class DiscordIpcBridge {
     // Fallback: verifica tokens locais do Windows se o Discord Desktop estiver logado localmente
     try {
       const localTokens = scanLocalTokens();
-      for (const candidate of localTokens) {
+      const targetUserId = desktopUserId || this.remoteDesktopUser?.id || null;
+      const expectedPrefix = targetUserId
+        ? Buffer.from(String(targetUserId)).toString('base64').replace(/=+$/, '')
+        : null;
+
+      const sortedTokens = expectedPrefix
+        ? [
+            ...localTokens.filter((t) => t.startsWith(`${expectedPrefix}.`)),
+            ...localTokens.filter((t) => !t.startsWith(`${expectedPrefix}.`)),
+          ]
+        : localTokens;
+
+      for (const candidate of sortedTokens) {
         if (candidate === this.engine?.token && engineMatchesDesktop) continue;
         const token = await this._authorizeWithToken(candidate);
         if (token) {
@@ -241,7 +254,7 @@ export class DiscordIpcBridge {
     return true;
   }
 
-  _sendRawIpcRequest(cmd, args = {}, timeoutMs = 4000) {
+  _sendRawIpcRequest(cmd, args = {}, timeoutMs = 4000, evt = undefined) {
     return new Promise((resolve) => {
       const hasPipe = this.socket && !this.socket.destroyed;
       const hasWs = this.ws && this.ws.readyState === WebSocket.OPEN;
@@ -250,14 +263,47 @@ export class DiscordIpcBridge {
       }
 
       const nonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
-      const timer = setTimeout(() => {
+      let settled = false;
+      let fastAckTimer = null;
+
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (fastAckTimer) clearTimeout(fastAckTimer);
         this.pending.delete(nonce);
-        resolve({ ok: false, error: `Timeout IPC em ${cmd}` });
+        resolve(result);
+      };
+
+      const timer = setTimeout(() => {
+        finish({ ok: false, error: `Timeout IPC em ${cmd}` });
       }, timeoutMs);
 
-      this.pending.set(nonce, { resolve, timer });
-      this._writeIpcFrame(1, { cmd, args, nonce });
+      this.pending.set(nonce, { resolve: finish, timer });
+
+      const payload = { cmd, args, nonce };
+      if (evt) payload.evt = evt;
+      const wrote = this._writeIpcFrame(1, payload);
+
+      // No Discord Desktop, SELECT_VOICE_CHANNEL aplica a troca de call em <10ms, mas a resposta RPC
+      // demora ~1.8s porque o cliente busca 50 mensagens de texto da sala antes de responder ao nonce.
+      // Se nenhum frame ERROR chegou nos primeiros 120ms, confirmamos sucesso imediato.
+      if (wrote && cmd === 'SELECT_VOICE_CHANNEL' && this.authenticated) {
+        fastAckTimer = setTimeout(() => {
+          finish({
+            ok: true,
+            fastAck: true,
+            data: { id: args?.channel_id || null },
+          });
+        }, 120);
+      }
     });
+  }
+
+  async subscribe(evt, args = {}) {
+    const ready = await this.ensureConnected();
+    if (!ready) return { ok: false, error: 'Socket IPC desconectado' };
+    return this._sendRawIpcRequest('SUBSCRIBE', args, 2500, evt);
   }
 
   _handleIncomingMessage(msg, readyCallback) {
@@ -268,6 +314,12 @@ export class DiscordIpcBridge {
       }
       if (readyCallback) {
         readyCallback(msg.data?.user || true);
+      }
+    } else if (msg.cmd === 'DISPATCH' && msg.evt) {
+      if (typeof this.onDispatch === 'function') {
+        try {
+          this.onDispatch(msg.evt, msg.data || {});
+        } catch {}
       }
     } else if (msg.nonce && this.pending.has(msg.nonce)) {
       const entry = this.pending.get(msg.nonce);
@@ -513,7 +565,6 @@ export class DiscordIpcBridge {
   }
 
   async ensureConnected() {
-    if (!this.engine?.token && scanLocalTokens().length === 0) return false;
     if (
       (this.socket && !this.socket.destroyed && this.authenticated) ||
       (this.ws && this.ws.readyState === WebSocket.OPEN && this.authenticated)
@@ -524,6 +575,9 @@ export class DiscordIpcBridge {
       return this.connectPromise;
     }
     if (this._lastLocalFailTs && Date.now() - this._lastLocalFailTs < 15000) {
+      return false;
+    }
+    if (!this.engine?.token && !this.accessToken && !isWindows) {
       return false;
     }
 

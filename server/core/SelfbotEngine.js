@@ -414,6 +414,7 @@ export class SelfbotEngine {
       userId,
       guildId,
       channelId,
+      sessionId: vs.session_id ? String(vs.session_id) : null,
       mute: Boolean(vs.mute),
       deaf: Boolean(vs.deaf),
       selfMute: Boolean(vs.self_mute),
@@ -444,6 +445,9 @@ export class SelfbotEngine {
 
     // Sincroniza currentVoice e voiceConfig se a atualização for da nossa própria conta
     if (this.user && userId === String(this.user.id)) {
+      if (record.sessionId) {
+        this.lastSelfVoiceSessionId = record.sessionId;
+      }
       if (
         !channelId &&
         this.currentVoice.guildId &&

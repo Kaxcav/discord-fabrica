@@ -35,7 +35,7 @@ router.post('/guild/select', async (req, res) => {
 });
 
 // Entrar em Canal de Voz
-router.post('/voice/join', (req, res) => {
+router.post('/voice/join', async (req, res) => {
   const bot = req.bot;
   const {
     guildId,
@@ -74,9 +74,11 @@ router.post('/voice/join', (req, res) => {
     bot.features.coleira.anchorChannelId = cId;
   }
 
-  const sent = bot.sendVoiceState(gId, cId);
-  if (bot.voiceConfig.useIpcForAutoVoice && bot.ipc.isConnected()) {
-    bot.ipc.sendCommand('SELECT_VOICE_CHANNEL', { channel_id: cId, force: true }).catch(() => {});
+  let sent = false;
+  if (bot.voiceManager.isDesktopVoiceSession()) {
+    sent = await bot.autoVoiceSelect(gId, cId);
+  } else {
+    sent = bot.sendVoiceState(gId, cId);
   }
   if (bot.voiceConfig.fakeStream && gId && cId) {
     setTimeout(() => bot.startFakeStream(gId, cId), 600);
@@ -100,9 +102,11 @@ router.post('/voice/leave', (req, res) => {
     bot.stopFakeStream();
     bot.voiceConfig.fakeStream = false;
   }
-  bot.sendVoiceState(null, null);
   if (bot.voiceConfig.useIpcForAutoVoice && bot.ipc.isConnected()) {
     bot.ipc.sendCommand('SELECT_VOICE_CHANNEL', { channel_id: null, force: true }).catch(() => {});
+  }
+  if (!bot.voiceManager.isDesktopVoiceSession()) {
+    bot.sendVoiceState(null, null);
   }
   bot.currentVoice.channelId = null;
   bot.currentVoice.guildId = null;
@@ -130,7 +134,7 @@ router.post('/voice/config', (req, res) => {
 
   const voiceStateChanged = selfMute !== undefined || selfDeaf !== undefined || selfVideo !== undefined || fakeStream !== undefined;
 
-  if (cId && voiceStateChanged) {
+  if (cId && voiceStateChanged && !bot.voiceManager.isDesktopVoiceSession()) {
     bot.sendVoiceState(gId, cId);
     bot.log(
       'voice',

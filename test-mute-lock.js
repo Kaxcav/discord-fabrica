@@ -432,7 +432,56 @@ async function run() {
       console.log('✓ 9. Anti-Disconnect + READY_SUPPLEMENTAL trava call e reconecta em Move e Disconnect');
     }
 
-    console.log('\n[TEST RESULT] TODOS OS 9 TESTES PASSARAM COM SUCESSO! ✓\n');
+    // -------------------------------------------------------------------------
+    // TESTE 10: NUNCA cria 2ª sessão (Op 4) quando a call pertence ao Discord Desktop
+    // -------------------------------------------------------------------------
+    {
+      let op4Count = 0;
+      bot.gateway.sendOp = (op) => {
+        if (op === 4) op4Count++;
+        return true;
+      };
+
+      bot.discordSessionId = 'railway-session-111';
+      bot.applyVoiceStateRecord(MOCK_GUILD_ID, {
+        user_id: MOCK_USER_ID,
+        guild_id: MOCK_GUILD_ID,
+        channel_id: null,
+        session_id: 'desktop-session-999',
+      });
+
+      assert.equal(
+        bot.voiceManager.isDesktopVoiceSession(),
+        true,
+        'Deve identificar sessão do Discord Desktop por session_id distinto'
+      );
+
+      let ipcCalls = 0;
+      const origSendCommand = bot.ipc.sendCommand.bind(bot.ipc);
+      bot.ipc.sendCommand = async () => {
+        ipcCalls++;
+        // Na 1ª tentativa falha, na 2ª tentativa (retry de 200ms) sucede sem Op 4
+        if (ipcCalls === 1) return { ok: false, error: 'timeout' };
+        return { ok: true, data: { id: MOCK_CHANNEL_ID } };
+      };
+
+      const resDesktop = await bot.autoVoiceSelect(MOCK_GUILD_ID, MOCK_CHANNEL_ID);
+      assert.equal(resDesktop, true, 'Retry de IPC deve reconectar no Desktop');
+      assert.equal(ipcCalls, 2, 'Deve ter tentado retry no IPC');
+      assert.equal(op4Count, 0, 'NUNCA deve enviar Gateway Op 4 quando em sessão Desktop');
+
+      // Mesmo se ambas tentativas IPC falharem em sessão Desktop, Op 4 deve continuar 0
+      bot.currentVoice.channelId = null;
+      bot.ipc.sendCommand = async () => ({ ok: false, error: 'timeout' });
+      const resFail = await bot.autoVoiceSelect(MOCK_GUILD_ID, MOCK_CHANNEL_ID);
+      assert.equal(resFail, false);
+      assert.equal(op4Count, 0, 'Mesmo em falha de IPC, não deve criar 2ª sessão com Op 4');
+
+      bot.ipc.sendCommand = origSendCommand;
+      console.log('✓ 10. Proteção anti-segunda-sessão: nunca dispara Gateway Op 4 sob sessão do Discord Desktop');
+    }
+
+    console.log('\n[TEST RESULT] TODOS OS 10 TESTES PASSARAM COM SUCESSO! ✓\n');
   } finally {
     const bot = sessions.get(SID);
     if (bot) { try { bot.destroy(); } catch {} sessions.delete(SID); }

@@ -7,6 +7,22 @@ export class VoiceManager {
     this.watchdogTimer = null;
     this.chaoticTimer = null;
     this._ignoreAntiDisconnectUntil = 0;
+    this._antiDisconnectTimer = null;
+    this._lastAutoVoiceAttemptTs = 0;
+  }
+
+  isDesktopVoiceSession() {
+    if (this.voiceConfig.useIpcForAutoVoice && this.engine.ipc?.isConnected()) {
+      return true;
+    }
+    if (
+      this.engine.lastSelfVoiceSessionId &&
+      this.engine.discordSessionId &&
+      String(this.engine.lastSelfVoiceSessionId) !== String(this.engine.discordSessionId)
+    ) {
+      return true;
+    }
+    return false;
   }
 
   get features() {
@@ -109,6 +125,7 @@ export class VoiceManager {
   async autoVoiceSelect(guildId, channelId) {
     const gId = guildId ? String(guildId) : null;
     const cId = channelId ? String(channelId) : null;
+    this._lastAutoVoiceAttemptTs = Date.now();
 
     const selfId = this.engine.user?.id ? String(this.engine.user.id) : null;
     const curLoc = selfId ? this.engine.userVoiceMap.get(selfId) : null;
@@ -140,10 +157,22 @@ export class VoiceManager {
 
     // 2. Tenta mover/reconectar o cliente Discord Desktop via IPC (local ou Remote PC Bridge)
     if (this.voiceConfig.useIpcForAutoVoice) {
-      const result = await this.engine.ipc.sendCommand('SELECT_VOICE_CHANNEL', {
+      let result = await this.engine.ipc.sendCommand('SELECT_VOICE_CHANNEL', {
         channel_id: cId,
         force: true,
       });
+
+      if (!result.ok && this.isDesktopVoiceSession()) {
+        await new Promise((r) => setTimeout(r, 200));
+        if (cId && this.currentVoice.channelId === cId) {
+          return true;
+        }
+        result = await this.engine.ipc.sendCommand('SELECT_VOICE_CHANNEL', {
+          channel_id: cId,
+          force: true,
+        });
+      }
+
       if (result.ok) {
         this._ipcWarnedOnce = false;
         this.voiceConfig.guildId = gId;
@@ -156,9 +185,14 @@ export class VoiceManager {
         );
         return true;
       }
+
+      // NUNCA envia Gateway Op 4 se a call pertencer ao Discord Desktop (evita criar 2ª sessão / "conectado em outro local")
+      if (this.isDesktopVoiceSession()) {
+        return false;
+      }
     }
 
-    // 3. Fallback: Gateway Op 4 direto
+    // 3. Fallback: Gateway Op 4 direto (apenas quando operando sem sessão de voz no Discord Desktop)
     if (this.voiceConfig.useIpcForAutoVoice && !this._ipcWarnedOnce) {
       this._ipcWarnedOnce = true;
       this.engine.log(
@@ -529,6 +563,11 @@ export class VoiceManager {
           channelId !== lockChannelId &&
           this.features.antiDisconnect.rejoinOnMove;
 
+        if (channelId && channelId === lockChannelId && this._antiDisconnectTimer) {
+          clearTimeout(this._antiDisconnectTimer);
+          this._antiDisconnectTimer = null;
+        }
+
         if (wasDisconnected || wasMoved) {
           this.stats.antiDisconnectTriggers++;
           const reasonText = wasDisconnected
@@ -539,9 +578,16 @@ export class VoiceManager {
             `[ANTI-DISCONNECT] ${reasonText} Voltando para ${this.engine.getChannelLabel(lockGuildId, lockChannelId)}...`
           );
 
+          if (this._antiDisconnectTimer) {
+            clearTimeout(this._antiDisconnectTimer);
+            this._antiDisconnectTimer = null;
+          }
+
           const waitMs = Math.max(0, Number(this.features.antiDisconnect.delayMs) || 0);
-          setTimeout(async () => {
+          this._antiDisconnectTimer = setTimeout(async () => {
+            this._antiDisconnectTimer = null;
             if (!this.features.antiDisconnect.enabled) return;
+            if (this.currentVoice.channelId === lockChannelId) return;
             await this.autoVoiceSelect(lockGuildId, lockChannelId);
             if (this.voiceConfig.fakeStream && lockGuildId && lockChannelId) {
               setTimeout(() => this.startFakeStream(lockGuildId, lockChannelId), 500);
@@ -711,9 +757,12 @@ export class VoiceManager {
         const selfId = this.engine.user?.id ? String(this.engine.user.id) : null;
         const selfLoc = selfId ? this.engine.userVoiceMap.get(selfId) : null;
         const curCh = selfLoc?.channelId || this.currentVoice.channelId || null;
+        const recentlyAttempted = Date.now() - (this._lastAutoVoiceAttemptTs || 0) < 2500;
         if (
           (!curCh || (curCh !== targetCh && this.features.antiDisconnect.rejoinOnMove)) &&
-          !this._watchdogVoiceInFlight
+          !this._watchdogVoiceInFlight &&
+          !this._antiDisconnectTimer &&
+          !recentlyAttempted
         ) {
           this._watchdogVoiceInFlight = true;
           this.autoVoiceSelect(targetGuild, targetCh).finally(() => {

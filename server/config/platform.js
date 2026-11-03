@@ -35,8 +35,15 @@ export function canScanLocalTokens() {
   return true;
 }
 
-export function scanLocalTokens() {
+let cachedLocalTokens = null;
+let cachedLocalTokensTs = 0;
+
+export function scanLocalTokens(forceRefresh = false) {
   if (!isWindows) return [];
+  const now = Date.now();
+  if (!forceRefresh && cachedLocalTokens && now - cachedLocalTokensTs < 60000) {
+    return cachedLocalTokens;
+  }
 
   const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
   const roamingAppData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
@@ -114,5 +121,7 @@ export function scanLocalTokens() {
     } catch {}
   }
 
-  return Array.from(foundTokens);
+  cachedLocalTokens = Array.from(foundTokens);
+  cachedLocalTokensTs = Date.now();
+  return cachedLocalTokens;
 }
