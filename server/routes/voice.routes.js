@@ -1,6 +1,24 @@
 import { Router } from 'express';
+import { sessions } from '../middleware/session.js';
 
 const router = Router();
+
+function resolveIpcTargetBots(req, userId = null) {
+  const targets = new Set();
+  if (req.bot) {
+    targets.add(req.bot);
+  }
+  const targetUid = userId ? String(userId).trim() : null;
+  for (const bot of sessions.values()) {
+    if (!bot) continue;
+    if (targetUid && bot.user?.id && String(bot.user.id) === targetUid) {
+      targets.add(bot);
+    } else if (!targetUid && (bot.status === 'connected' || bot.token)) {
+      targets.add(bot);
+    }
+  }
+  return Array.from(targets);
+}
 
 // Selecionar Servidor
 router.post('/guild/select', async (req, res) => {
@@ -57,6 +75,9 @@ router.post('/voice/join', (req, res) => {
   }
 
   const sent = bot.sendVoiceState(gId, cId);
+  if (bot.voiceConfig.useIpcForAutoVoice && bot.ipc.isConnected()) {
+    bot.ipc.sendCommand('SELECT_VOICE_CHANNEL', { channel_id: cId, force: true }).catch(() => {});
+  }
   if (bot.voiceConfig.fakeStream && gId && cId) {
     setTimeout(() => bot.startFakeStream(gId, cId), 600);
   }
@@ -80,6 +101,9 @@ router.post('/voice/leave', (req, res) => {
     bot.voiceConfig.fakeStream = false;
   }
   bot.sendVoiceState(null, null);
+  if (bot.voiceConfig.useIpcForAutoVoice && bot.ipc.isConnected()) {
+    bot.ipc.sendCommand('SELECT_VOICE_CHANNEL', { channel_id: null, force: true }).catch(() => {});
+  }
   bot.currentVoice.channelId = null;
   bot.currentVoice.guildId = null;
   bot.log('voice', 'Desconectado da call pelo painel.');
@@ -176,6 +200,89 @@ router.post('/voice/member-action', async (req, res) => {
   }
   bot.broadcastState();
   res.json({ ok: out.ok, error: out.error, state: bot.getPublicState() });
+});
+
+// ============================================================================
+// Rotas de Sincronização do Remote PC Bridge (IPC Local <-> Painel Nuvem)
+// ============================================================================
+router.post('/voice/ipc-register', async (req, res) => {
+  const { user, userId, source, currentVoiceChannel } = req.body || {};
+  const targetUid = user?.id || userId || null;
+  const bots = resolveIpcTargetBots(req, targetUid);
+
+  let accessToken = null;
+  const pending = [];
+
+  for (const bot of bots) {
+    bot.ipc.registerRemoteBridge({
+      user: user || (targetUid ? { id: String(targetUid) } : null),
+      source: source || 'PC Bridge',
+      currentVoiceChannel,
+    });
+    if (!accessToken && bot.token) {
+      accessToken = await bot.ipc.getRpcAccessToken(false, targetUid);
+    }
+    pending.push(...bot.ipc.getPendingRemoteCommands());
+  }
+
+  res.json({
+    ok: true,
+    matchedSessions: bots.length,
+    accessToken,
+    pending,
+  });
+});
+
+router.get('/voice/ipc-pending', async (req, res) => {
+  const targetUid = req.query?.userId || null;
+  const bots = resolveIpcTargetBots(req, targetUid);
+  const pending = [];
+  let accessToken = null;
+
+  for (const bot of bots) {
+    bot.ipc.remoteConnected = true;
+    bot.ipc.remoteLastSeen = Date.now();
+    if (!accessToken && bot.token) {
+      accessToken = await bot.ipc.getRpcAccessToken(false, targetUid);
+    }
+    pending.push(...bot.ipc.getPendingRemoteCommands());
+  }
+
+  res.json({ ok: true, accessToken, pending });
+});
+
+router.post('/voice/ipc-result', (req, res) => {
+  const { requestId, ok, data, error, code } = req.body || {};
+  if (!requestId) {
+    return res.status(400).json({ error: 'requestId obrigatório' });
+  }
+
+  let resolved = false;
+  if (req.bot && req.bot.ipc.resolveRemoteCommand(requestId, { ok, data, error, code })) {
+    resolved = true;
+  } else {
+    for (const bot of sessions.values()) {
+      if (bot.ipc.resolveRemoteCommand(requestId, { ok, data, error, code })) {
+        resolved = true;
+        break;
+      }
+    }
+  }
+
+  res.json({ ok: true, resolved });
+});
+
+router.get('/voice/ipc-status', (req, res) => {
+  const bot = req.bot;
+  if (!bot) {
+    return res.json({ ok: true, connected: false, mode: 'disconnected' });
+  }
+  res.json({
+    ok: true,
+    connected: bot.ipc.isConnected(),
+    mode: bot.ipc.getMode(),
+    desktopUser: bot.ipc.remoteDesktopUser,
+  });
 });
 
 export default router;

@@ -24,15 +24,22 @@ router.post('/features/anti-disconnect', async (req, res) => {
   }
 
   if (bot.features.antiDisconnect.enabled && !bot.features.antiDisconnect.channelId) {
-    bot.features.antiDisconnect.guildId = bot.currentVoice.guildId || bot.selectedGuildId;
-    bot.features.antiDisconnect.channelId = bot.currentVoice.channelId;
+    const selfLoc = bot.user?.id ? bot.userVoiceMap.get(String(bot.user.id)) : null;
+    bot.features.antiDisconnect.guildId =
+      bot.currentVoice.guildId || selfLoc?.guildId || bot.selectedGuildId;
+    bot.features.antiDisconnect.channelId =
+      bot.currentVoice.channelId || selfLoc?.channelId || null;
   }
 
   if (bot.features.antiDisconnect.enabled && bot.features.antiDisconnect.channelId) {
-    await bot.autoVoiceSelect(
-      bot.features.antiDisconnect.guildId,
-      bot.features.antiDisconnect.channelId
-    );
+    const selfLoc = bot.user?.id ? bot.userVoiceMap.get(String(bot.user.id)) : null;
+    const curCh = bot.currentVoice.channelId || selfLoc?.channelId || null;
+    if (curCh !== bot.features.antiDisconnect.channelId || bot.ipc.isConnected()) {
+      await bot.autoVoiceSelect(
+        bot.features.antiDisconnect.guildId,
+        bot.features.antiDisconnect.channelId
+      );
+    }
     bot.log(
       'voice',
       `[ANTI-DISCONNECT] Ativado e travado em ${bot.getChannelLabel(bot.features.antiDisconnect.guildId, bot.features.antiDisconnect.channelId)} (delay=${bot.features.antiDisconnect.delayMs}ms)`

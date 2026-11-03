@@ -107,21 +107,78 @@ export class VoiceManager {
   }
 
   async autoVoiceSelect(guildId, channelId) {
-    if (this.voiceConfig.useIpcForAutoVoice) {
-      const result = await this.engine.ipc.sendCommand('SELECT_VOICE_CHANNEL', {
-        channel_id: channelId || null,
-        force: true,
-      });
-      if (result.ok) {
+    const gId = guildId ? String(guildId) : null;
+    const cId = channelId ? String(channelId) : null;
+
+    if (this._autoVoiceInFlight) return true;
+    this._autoVoiceInFlight = true;
+
+    try {
+      if (this.voiceConfig.useIpcForAutoVoice) {
+        const result = await this.engine.ipc.sendCommand('SELECT_VOICE_CHANNEL', {
+          channel_id: cId,
+          force: true,
+        });
+        if (result.ok) {
+          this._ipcWarnedOnce = false;
+          this.voiceConfig.guildId = gId;
+          this.voiceConfig.channelId = cId;
+          this.currentVoice.guildId = gId;
+          this.currentVoice.channelId = cId;
+          this.engine.log(
+            'info',
+            `[MODO IPC] Discord Desktop movido para ${cId ? this.engine.getChannelLabel(gId, cId) : 'Fora de Call'}`
+          );
+          return true;
+        }
+      }
+
+      // Se o usuário já está em call no servidor (ex: no Discord Desktop), tenta mover via REST API antes de usar Op 4
+      const selfId = this.engine.user?.id ? String(this.engine.user.id) : null;
+      const curLoc = selfId ? this.engine.userVoiceMap.get(selfId) : null;
+      if (cId && gId && selfId && curLoc?.guildId === gId && curLoc?.channelId) {
+        if (curLoc.channelId === cId) {
+          this.voiceConfig.guildId = gId;
+          this.voiceConfig.channelId = cId;
+          this.currentVoice.guildId = gId;
+          this.currentVoice.channelId = cId;
+          return true;
+        }
+
+        const moveKey = `${gId}:${selfId}:${JSON.stringify({ channel_id: cId })}`;
+        this.inFlightMemberOps.delete(moveKey);
+        const moveRes = await this.patchGuildMemberVoice(
+          gId,
+          selfId,
+          { channel_id: cId },
+          'AUTO-VOICE',
+          Priority.CRITICAL,
+          true
+        );
+        if (moveRes?.ok && !moveRes.skipped) {
+          this.voiceConfig.guildId = gId;
+          this.voiceConfig.channelId = cId;
+          this.currentVoice.guildId = gId;
+          this.currentVoice.channelId = cId;
+          this.engine.log(
+            'voice',
+            `[AUTO-VOICE] Movido para ${this.engine.getChannelLabel(gId, cId)} via API do servidor.`
+          );
+          return true;
+        }
+      }
+
+      if (this.voiceConfig.useIpcForAutoVoice && !this._ipcWarnedOnce) {
+        this._ipcWarnedOnce = true;
         this.engine.log(
           'info',
-          `[MODO IPC] Discord Desktop movido para ${this.engine.getChannelLabel(guildId, channelId)}`
+          '[AUTO-VOICE] PC Bridge local inativo; operando via Gateway Op 4 direto.'
         );
-        return true;
       }
-      this.engine.log('warn', `[MODO IPC] IPC falhou (${result.error || 'sem resposta'}), usando gateway direto.`);
+      return this.sendVoiceState(gId, cId);
+    } finally {
+      this._autoVoiceInFlight = false;
     }
-    return this.sendVoiceState(guildId, channelId);
   }
 
   startFakeStream(guildId, channelId) {
@@ -646,9 +703,11 @@ export class VoiceManager {
       ) {
         const targetCh = this.features.antiDisconnect.channelId;
         const targetGuild = this.features.antiDisconnect.guildId;
-        const curCh = this.currentVoice.channelId;
+        const selfId = this.engine.user?.id ? String(this.engine.user.id) : null;
+        const selfLoc = selfId ? this.engine.userVoiceMap.get(selfId) : null;
+        const curCh = this.currentVoice.channelId || selfLoc?.channelId || null;
         if (!curCh || (curCh !== targetCh && this.features.antiDisconnect.rejoinOnMove)) {
-          this.sendVoiceState(targetGuild, targetCh);
+          this.autoVoiceSelect(targetGuild, targetCh);
         }
       }
 

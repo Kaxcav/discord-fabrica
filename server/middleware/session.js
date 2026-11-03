@@ -22,6 +22,23 @@ export function resolveSession(req, res, next) {
   const rawSessionId = req.headers['x-session-id'] || req.query?.sid;
   const sessionId = typeof rawSessionId === 'string' ? rawSessionId.trim() : null;
 
+  // Ponte IPC local pode sincronizar com sessões ativas sem criar sessão órfã
+  if (
+    req.headers['x-ipc-bridge'] === '1' &&
+    (fullPath.startsWith('/api/voice/ipc-') || req.path.startsWith('/voice/ipc-'))
+  ) {
+    if (sessionId && sessions.has(sessionId)) {
+      const bot = sessions.get(sessionId);
+      bot.touch();
+      req.session = { id: sessionId };
+      req.bot = bot;
+    } else {
+      req.session = { id: sessionId || 'ipc-bridge' };
+      req.bot = null;
+    }
+    return next();
+  }
+
   if (!sessionId || !SESSION_ID_REGEX.test(sessionId)) {
     return res.status(401).json({ error: 'sessionId required' });
   }

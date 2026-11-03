@@ -251,7 +251,95 @@ async function run() {
       console.log('✓ 6. Mute-Lock dispara PATCH imediatamente mesmo sem cache prévio de userVoiceMap');
     }
 
-    console.log('\n[TEST RESULT] TODOS OS 6 TESTES DE MUTE-LOCK E KICK-LOOP PASSARAM COM SUCESSO! ✓\n');
+    // -------------------------------------------------------------------------
+    // TESTE 7: Remote PC Bridge (IPC na nuvem / Railway) executa SELECT_VOICE_CHANNEL
+    // -------------------------------------------------------------------------
+    {
+      // Simula ambiente Railway onde pipe local não existe
+      bot.ipc.ensureConnected = async () => false;
+
+      // Registra Remote PC Bridge para o usuário da sessão
+      const regRes = await fetch(`${baseUrl}/api/voice/ipc-register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-ipc-bridge': '1' },
+        body: JSON.stringify({
+          user: { id: MOCK_USER_ID, username: 'test-bot' },
+          source: 'local-pipe-0',
+        }),
+      });
+      assert.equal(regRes.status, 200);
+      assert.equal(bot.ipc.isRemoteActive(), true, 'Remote PC Bridge deve estar ativo');
+
+      // Dispara autoVoiceSelect (que deve aguardar resposta do Remote PC Bridge)
+      const selectPromise = bot.autoVoiceSelect(MOCK_GUILD_ID, MOCK_CHANNEL_ID);
+
+      // Aguarda comando entrar na fila pendente
+      await new Promise((r) => setTimeout(r, 40));
+
+      const pendRes = await fetch(
+        `${baseUrl}/api/voice/ipc-pending?userId=${encodeURIComponent(MOCK_USER_ID)}`,
+        { headers: { 'x-ipc-bridge': '1' } }
+      );
+      const pendData = await pendRes.json();
+      assert.equal(pendData.ok, true);
+      assert.equal(pendData.pending.length, 1, 'Deve haver 1 comando SELECT_VOICE_CHANNEL pendente');
+      assert.equal(pendData.pending[0].cmd, 'SELECT_VOICE_CHANNEL');
+      assert.equal(pendData.pending[0].args.channel_id, MOCK_CHANNEL_ID);
+
+      // Responde ao comando simulando o PC Bridge local
+      const resCmd = await fetch(`${baseUrl}/api/voice/ipc-result`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-ipc-bridge': '1' },
+        body: JSON.stringify({
+          requestId: pendData.pending[0].requestId,
+          ok: true,
+          data: { id: MOCK_CHANNEL_ID },
+        }),
+      });
+      assert.equal(resCmd.status, 200);
+
+      const selectOk = await selectPromise;
+      assert.equal(selectOk, true, 'autoVoiceSelect via Remote PC Bridge deve retornar true');
+      assert.equal(bot.currentVoice.channelId, MOCK_CHANNEL_ID);
+      console.log('✓ 7. Remote PC Bridge sincroniza SELECT_VOICE_CHANNEL entre nuvem (Railway) e PC local');
+    }
+
+    // -------------------------------------------------------------------------
+    // TESTE 8: Fallback de Auto-Voice via REST API quando usuário já está em call e sem IPC
+    // -------------------------------------------------------------------------
+    {
+      requests.length = 0;
+      bot.ipc.ensureConnected = async () => false;
+      bot.ipc.remoteConnected = false;
+      bot.ipc.remoteLastSeen = 0;
+
+      const OTHER_CHANNEL = '345678901234567890';
+      bot.applyVoiceStateRecord(MOCK_GUILD_ID, {
+        user_id: MOCK_USER_ID,
+        guild_id: MOCK_GUILD_ID,
+        channel_id: OTHER_CHANNEL,
+        mute: false,
+        deaf: false,
+      });
+
+      bot.request = async (method, url, body) => {
+        requests.push({ method, url, body });
+        return { ok: true, status: 200, data: {} };
+      };
+
+      const ok = await bot.autoVoiceSelect(MOCK_GUILD_ID, MOCK_CHANNEL_ID);
+      assert.equal(ok, true);
+      const selfMoveReq = requests.find(
+        (r) =>
+          r.method === 'PATCH' &&
+          r.url === `/guilds/${MOCK_GUILD_ID}/members/${MOCK_USER_ID}` &&
+          r.body?.channel_id === MOCK_CHANNEL_ID
+      );
+      assert.ok(selfMoveReq, 'Deve mover a própria conta via REST PATCH quando já está em call sem IPC');
+      console.log('✓ 8. Auto-Voice move a própria conta via REST API quando em call sem IPC');
+    }
+
+    console.log('\n[TEST RESULT] TODOS OS 8 TESTES PASSARAM COM SUCESSO! ✓\n');
   } finally {
     const bot = sessions.get(SID);
     if (bot) { try { bot.destroy(); } catch {} sessions.delete(SID); }

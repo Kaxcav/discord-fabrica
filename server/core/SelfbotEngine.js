@@ -795,7 +795,11 @@ export class SelfbotEngine {
           ? this.guilds.get(this.currentVoice.guildId)?.name || this.currentVoice.guildId
           : null,
       },
-      voiceConfig: this.voiceConfig,
+      voiceConfig: {
+        ...this.voiceConfig,
+        ipcConnected: this.ipcBridge.isConnected(),
+        ipcMode: this.ipcBridge.getMode(),
+      },
       features: {
         antiDisconnect: {
           ...this.features.antiDisconnect,

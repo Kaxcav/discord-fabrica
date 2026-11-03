@@ -89,9 +89,56 @@ export default function App() {
     const pinParam = pin ? `&pin=${encodeURIComponent(pin)}` : '';
     const es = new EventSource(`/api/events?sid=${encodeURIComponent(SESSION_ID)}${pinParam}`);
 
+    const syncLocalIpcBridge = async () => {
+      try {
+        const res = await fetch('http://127.0.0.1:6473/status', {
+          method: 'GET',
+          mode: 'cors',
+        });
+        if (!res.ok) return;
+        const statusData = await res.json();
+        if (statusData?.ok && statusData?.connected) {
+          await apiPost('/api/voice/ipc-register', {
+            user: statusData.user || null,
+            source: statusData.mode || 'Browser PC Bridge',
+            currentVoiceChannel: statusData.currentVoiceChannel || null,
+          });
+        }
+      } catch {}
+    };
+
     es.onopen = () => {
       rehydrateState();
+      syncLocalIpcBridge();
     };
+
+    const bridgeTimer = setInterval(syncLocalIpcBridge, 20000);
+
+    es.addEventListener('ipc_request', async (e) => {
+      try {
+        const reqData = JSON.parse(e.data);
+        if (!reqData?.requestId || !reqData?.cmd) return;
+        const r = await fetch('http://127.0.0.1:6473/ipc', {
+          method: 'POST',
+          mode: 'cors',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cmd: reqData.cmd,
+            args: reqData.args || {},
+            accessToken: reqData.accessToken || null,
+          }),
+        });
+        if (r.ok) {
+          const out = await r.json();
+          await apiPost('/api/voice/ipc-result', {
+            requestId: reqData.requestId,
+            ok: Boolean(out.ok),
+            data: out.data,
+            error: out.error,
+          });
+        }
+      } catch {}
+    });
 
     es.addEventListener('state', (e) => {
       try {
@@ -126,7 +173,10 @@ export default function App() {
       } catch {}
     });
 
-    return () => es.close();
+    return () => {
+      clearInterval(bridgeTimer);
+      es.close();
+    };
   }, [pinRequired, rehydrateState, setBotState, addLog, setLimparDmTask]);
 
   const isConnected =
