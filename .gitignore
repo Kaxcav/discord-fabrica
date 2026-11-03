@@ -19,6 +19,9 @@ node_modules
 # Build output (Railway builda na hora)
 dist
 dist-ssr
+target
+/target
+Cargo.lock
 *.local
 
 # Editor
