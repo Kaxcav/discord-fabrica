@@ -265,8 +265,37 @@ export class SelfbotEngine {
         this.selectedGuildId = this.guilds.keys().next().value;
       }
       this.log('success', `Gateway READY! Sessão ativa (${this.guilds.size} servidores carregados).`);
+      if (this.currentVoice.guildId) {
+        this.selectedGuildId = this.currentVoice.guildId;
+      }
       if (this.selectedGuildId) {
         this.selectGuild(this.selectedGuildId).catch(() => {});
+      }
+      this.broadcastState();
+    });
+
+    this.eventBus.on('READY_SUPPLEMENTAL', (d) => {
+      if (!d) return;
+      if (Array.isArray(d.merged_members)) {
+        for (const memberGroup of d.merged_members) {
+          if (Array.isArray(memberGroup)) {
+            for (const m of memberGroup) {
+              if (m?.user) this.cacheUser(m.user);
+            }
+          }
+        }
+      }
+      if (Array.isArray(d.guilds)) {
+        for (const g of d.guilds) {
+          this.ingestGuildObject(g);
+        }
+      }
+      if (this.currentVoice.guildId && this.currentVoice.channelId) {
+        this.log(
+          'voice',
+          `[GATEWAY] Call ativa detectada em ${this.getChannelLabel(this.currentVoice.guildId, this.currentVoice.channelId)}.`
+        );
+        this.selectGuild(this.currentVoice.guildId).catch(() => {});
       }
       this.broadcastState();
     });
@@ -316,21 +345,25 @@ export class SelfbotEngine {
   ingestGuildObject(g) {
     if (!g || !g.id) return;
     const gId = String(g.id);
+    const gName = g.name || g.properties?.name || null;
+    const gIcon = g.icon ?? g.properties?.icon ?? null;
+    const gOwnerId = g.owner_id || g.properties?.owner_id || null;
+
     let entry = this.guilds.get(gId);
     if (!entry) {
       entry = {
         id: gId,
-        name: g.name || `Servidor ${gId}`,
-        icon: g.icon || null,
-        ownerId: g.owner_id || null,
+        name: gName || `Servidor ${gId}`,
+        icon: gIcon,
+        ownerId: gOwnerId,
         channels: new Map(),
         roles: new Map(),
       };
       this.guilds.set(gId, entry);
     } else {
-      if (g.name) entry.name = g.name;
-      if (g.icon) entry.icon = g.icon;
-      if (g.owner_id) entry.ownerId = g.owner_id;
+      if (gName) entry.name = gName;
+      if (gIcon) entry.icon = gIcon;
+      if (gOwnerId) entry.ownerId = gOwnerId;
     }
 
     if (Array.isArray(g.channels)) {
@@ -411,6 +444,15 @@ export class SelfbotEngine {
 
     // Sincroniza currentVoice e voiceConfig se a atualização for da nossa própria conta
     if (this.user && userId === String(this.user.id)) {
+      if (
+        !channelId &&
+        this.currentVoice.guildId &&
+        guildId &&
+        String(this.currentVoice.guildId) !== String(guildId)
+      ) {
+        return record;
+      }
+
       this.currentVoice = {
         guildId: channelId ? guildId : null,
         channelId,
@@ -425,6 +467,10 @@ export class SelfbotEngine {
       if (channelId) {
         this.voiceConfig.channelId = channelId;
         if (guildId) this.voiceConfig.guildId = guildId;
+        if (this.features.antiDisconnect.enabled && !this.features.antiDisconnect.channelId) {
+          this.features.antiDisconnect.guildId = guildId;
+          this.features.antiDisconnect.channelId = channelId;
+        }
       } else {
         this.voiceConfig.channelId = null;
         this.voiceConfig.guildId = null;

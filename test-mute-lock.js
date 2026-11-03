@@ -339,7 +339,100 @@ async function run() {
       console.log('✓ 8. Auto-Voice move a própria conta via REST API quando em call sem IPC');
     }
 
-    console.log('\n[TEST RESULT] TODOS OS 8 TESTES PASSARAM COM SUCESSO! ✓\n');
+    // -------------------------------------------------------------------------
+    // TESTE 9: Anti-Disconnect + READY_SUPPLEMENTAL (Move e Disconnect)
+    // -------------------------------------------------------------------------
+    {
+      requests.length = 0;
+      bot.userVoiceMap.clear();
+      bot.currentVoice.channelId = null;
+      bot.currentVoice.guildId = null;
+      bot.features.antiDisconnect.enabled = false;
+      bot.features.antiDisconnect.channelId = null;
+      bot.features.antiDisconnect.guildId = null;
+
+      // Simula chegada do READY_SUPPLEMENTAL do Gateway v10 com o usuário em call
+      bot.eventBus.safeEmit('READY_SUPPLEMENTAL', {
+        guilds: [
+          {
+            id: MOCK_GUILD_ID,
+            voice_states: [
+              {
+                user_id: MOCK_USER_ID,
+                guild_id: MOCK_GUILD_ID,
+                channel_id: MOCK_CHANNEL_ID,
+                mute: false,
+                deaf: false,
+              },
+            ],
+          },
+        ],
+      });
+
+      assert.equal(
+        bot.currentVoice.channelId,
+        MOCK_CHANNEL_ID,
+        'READY_SUPPLEMENTAL deve popular currentVoice.channelId'
+      );
+
+      // Ativa Anti-Disconnect sem passar channelId (como o botão da CallOpsTab faz)
+      const resActivate = await fetch(`${baseUrl}/api/features/anti-disconnect`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ enabled: true, delayMs: 10, rejoinOnMove: true }),
+      });
+      assert.equal(resActivate.status, 200);
+      assert.equal(bot.features.antiDisconnect.enabled, true);
+      assert.equal(
+        bot.features.antiDisconnect.channelId,
+        MOCK_CHANNEL_ID,
+        'Anti-Disconnect deve travar automaticamente na call atual'
+      );
+
+      // Simula moderador movendo o usuário para outra sala
+      const OTHER_CH = '999999999999999999';
+      bot.request = async (method, url, body) => {
+        requests.push({ method, url, body });
+        return { ok: true, status: 200, data: {} };
+      };
+
+      bot.eventBus.safeEmit('VOICE_STATE_UPDATE', {
+        user_id: MOCK_USER_ID,
+        guild_id: MOCK_GUILD_ID,
+        channel_id: OTHER_CH,
+      });
+
+      await new Promise((r) => setTimeout(r, 60));
+
+      const moveBackReq = requests.find(
+        (r) =>
+          r.method === 'PATCH' &&
+          r.url === `/guilds/${MOCK_GUILD_ID}/members/${MOCK_USER_ID}` &&
+          r.body?.channel_id === MOCK_CHANNEL_ID
+      );
+      assert.ok(moveBackReq, 'Anti-Disconnect deve puxar de volta ao ser movido');
+
+      // Simula moderador desconectando o usuário da call (channel_id: null)
+      let op4Sent = null;
+      bot.gateway.sendOp = (op, d) => {
+        if (op === 4) op4Sent = d;
+        return true;
+      };
+
+      bot.eventBus.safeEmit('VOICE_STATE_UPDATE', {
+        user_id: MOCK_USER_ID,
+        guild_id: MOCK_GUILD_ID,
+        channel_id: null,
+      });
+
+      await new Promise((r) => setTimeout(r, 60));
+
+      assert.ok(op4Sent, 'Anti-Disconnect deve reconectar ao ser desconectado');
+      assert.equal(op4Sent.channel_id, MOCK_CHANNEL_ID);
+      console.log('✓ 9. Anti-Disconnect + READY_SUPPLEMENTAL trava call e reconecta em Move e Disconnect');
+    }
+
+    console.log('\n[TEST RESULT] TODOS OS 9 TESTES PASSARAM COM SUCESSO! ✓\n');
   } finally {
     const bot = sessions.get(SID);
     if (bot) { try { bot.destroy(); } catch {} sessions.delete(SID); }

@@ -1,3 +1,4 @@
+import fs from 'fs';
 import net from 'net';
 import WebSocket from 'ws';
 import {
@@ -7,7 +8,7 @@ import {
   buildHeaders,
   delay,
 } from '../config/constants.js';
-import { getIpcPipePath, scanLocalTokens } from '../config/platform.js';
+import { getIpcPipePath, isWindows, scanLocalTokens } from '../config/platform.js';
 
 export class DiscordIpcBridge {
   constructor(engine) {
@@ -60,11 +61,24 @@ export class DiscordIpcBridge {
       const gId = info.currentVoiceChannel.guild_id
         ? String(info.currentVoiceChannel.guild_id)
         : null;
-      if (chId && !this.engine.currentVoice.channelId) {
+      if (chId) {
         this.engine.currentVoice.channelId = chId;
         this.engine.currentVoice.guildId = gId;
         this.engine.voiceConfig.channelId = chId;
         this.engine.voiceConfig.guildId = gId;
+        if (this.engine.user?.id && gId) {
+          this.engine.userVoiceMap.set(String(this.engine.user.id), {
+            guildId: gId,
+            channelId: chId,
+          });
+        }
+        if (
+          this.engine.features?.antiDisconnect?.enabled &&
+          !this.engine.features.antiDisconnect.channelId
+        ) {
+          this.engine.features.antiDisconnect.guildId = gId;
+          this.engine.features.antiDisconnect.channelId = chId;
+        }
       }
     }
 
@@ -273,6 +287,9 @@ export class DiscordIpcBridge {
 
   async _tryConnectNamedPipe(i) {
     const pipePath = getIpcPipePath(i);
+    if (!isWindows && !fs.existsSync(pipePath)) {
+      return false;
+    }
     const connectedSocket = await new Promise((resolve) => {
       let done = false;
       let sock;
@@ -506,6 +523,9 @@ export class DiscordIpcBridge {
     if (this.connectPromise) {
       return this.connectPromise;
     }
+    if (this._lastLocalFailTs && Date.now() - this._lastLocalFailTs < 15000) {
+      return false;
+    }
 
     this.connectPromise = (async () => {
       this.close();
@@ -513,6 +533,7 @@ export class DiscordIpcBridge {
       // 1. Tenta Named Pipes locais (discord-ipc-0..9)
       for (let i = 0; i <= 9; i++) {
         if (await this._tryConnectNamedPipe(i)) {
+          this._lastLocalFailTs = 0;
           return true;
         }
       }
@@ -520,10 +541,12 @@ export class DiscordIpcBridge {
       // 2. Fallback: Tenta WebSocket RPC local (127.0.0.1:6463..6472 com Origin permitido do StreamKit)
       for (let i = 0; i <= 4; i++) {
         if (await this._tryConnectLocalWebSocket(i)) {
+          this._lastLocalFailTs = 0;
           return true;
         }
       }
 
+      this._lastLocalFailTs = Date.now();
       return false;
     })();
 
@@ -567,10 +590,9 @@ export class DiscordIpcBridge {
       return this._sendRawIpcRequest(cmd, args, timeoutMs);
     }
 
-    // Se estiver rodando na nuvem (Railway), despacha para o Remote PC Bridge (Browser / Local Daemon)
-    if (this.isRemoteActive() || (this.engine?.sseClients && this.engine.sseClients.size > 0)) {
-      const waitMs = this.isRemoteActive() ? timeoutMs : Math.min(timeoutMs, 1800);
-      return this.sendRemoteCommand(cmd, args, waitMs);
+    // Se estiver rodando na nuvem (Railway), despacha para o Remote PC Bridge quando ativo
+    if (this.isRemoteActive()) {
+      return this.sendRemoteCommand(cmd, args, Math.min(timeoutMs, 2500));
     }
 
     return { ok: false, error: 'Discord Desktop IPC não disponível' };

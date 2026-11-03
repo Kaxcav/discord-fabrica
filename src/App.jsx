@@ -538,8 +538,7 @@ export default function App() {
             onClick={() =>
               updateAntiDisconnect({
                 enabled: !feat.antiDisconnect?.enabled,
-                guildId: cv.guildId || botState.selectedGuildId,
-                channelId: cv.channelId || feat.antiDisconnect?.channelId,
+                ...(cv.channelId ? { guildId: cv.guildId, channelId: cv.channelId } : {}),
               })
             }
             className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 border transition-colors cursor-pointer ${

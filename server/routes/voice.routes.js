@@ -211,6 +211,7 @@ router.post('/voice/ipc-register', async (req, res) => {
   const bots = resolveIpcTargetBots(req, targetUid);
 
   let accessToken = null;
+  let antiDisconnect = null;
   const pending = [];
 
   for (const bot of bots) {
@@ -222,6 +223,9 @@ router.post('/voice/ipc-register', async (req, res) => {
     if (!accessToken && bot.token) {
       accessToken = await bot.ipc.getRpcAccessToken(false, targetUid);
     }
+    if (bot.features?.antiDisconnect?.enabled && bot.features.antiDisconnect.channelId) {
+      antiDisconnect = { ...bot.features.antiDisconnect };
+    }
     pending.push(...bot.ipc.getPendingRemoteCommands());
   }
 
@@ -229,6 +233,7 @@ router.post('/voice/ipc-register', async (req, res) => {
     ok: true,
     matchedSessions: bots.length,
     accessToken,
+    antiDisconnect,
     pending,
   });
 });
@@ -238,6 +243,7 @@ router.get('/voice/ipc-pending', async (req, res) => {
   const bots = resolveIpcTargetBots(req, targetUid);
   const pending = [];
   let accessToken = null;
+  let antiDisconnect = null;
 
   for (const bot of bots) {
     bot.ipc.remoteConnected = true;
@@ -245,10 +251,13 @@ router.get('/voice/ipc-pending', async (req, res) => {
     if (!accessToken && bot.token) {
       accessToken = await bot.ipc.getRpcAccessToken(false, targetUid);
     }
+    if (bot.features?.antiDisconnect?.enabled && bot.features.antiDisconnect.channelId) {
+      antiDisconnect = { ...bot.features.antiDisconnect };
+    }
     pending.push(...bot.ipc.getPendingRemoteCommands());
   }
 
-  res.json({ ok: true, accessToken, pending });
+  res.json({ ok: true, accessToken, antiDisconnect, pending });
 });
 
 router.post('/voice/ipc-result', (req, res) => {

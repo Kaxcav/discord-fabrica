@@ -194,5 +194,6 @@ server.listen(BRIDGE_PORT, '127.0.0.1', async () => {
   }
 
   await syncWithRemotePanel();
-  setInterval(syncWithRemotePanel, 1500);
+  setInterval(syncWithRemotePanel, 350);
 });
+

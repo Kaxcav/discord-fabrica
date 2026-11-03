@@ -6,6 +6,11 @@ export function pinMiddleware(req, res, next) {
     return next();
   }
 
+  // Ponte IPC local autentica via ID de usuário da sessão ativa / requestId
+  if (req.headers['x-ipc-bridge'] === '1' && req.path.startsWith('/voice/ipc-')) {
+    return next();
+  }
+
   // Se nenhum PIN estiver configurado no servidor, acesso liberado
   if (!PANEL_PIN) {
     return next();
