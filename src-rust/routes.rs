@@ -914,9 +914,7 @@ async fn get_voice_ipc_status(
     let Some(bot) = resolve_bot(&state, &headers, &query) else {
         return Json(json!({ "ok": true, "connected": false, "mode": "disconnected" }));
     };
-    if !bot.ipc.is_connected() {
-        let _ = bot.ipc.ensure_connected().await;
-    }
+    let _ = bot.sync_local_ipc_voice().await;
     let desktop_user = bot.ipc.remote_desktop_user.lock().clone();
     Json(json!({
         "ok": true,

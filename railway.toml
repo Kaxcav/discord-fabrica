@@ -1,8 +1,0 @@
-[build]
-builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
-
-[deploy]
-startCommand = "/app/discord-fabrica"
-restartPolicyType = "on_failure"
-restartPolicyMaxRetries = 5

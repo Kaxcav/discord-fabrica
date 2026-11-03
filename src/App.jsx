@@ -29,6 +29,7 @@ import {
   getGuildIconUrl,
   getStoredPin,
   apiPost,
+  apiGet,
 } from './store/useBotStore.js';
 import RadarTab from './components/RadarTab.jsx';
 import CallOpsTab from './components/CallOpsTab.jsx';
@@ -91,6 +92,13 @@ export default function App() {
 
     const syncLocalIpcBridge = async () => {
       try {
+        const isLocal =
+          window.location.hostname === 'localhost' ||
+          window.location.hostname === '127.0.0.1';
+        if (isLocal) {
+          await apiGet('/api/voice/ipc-status');
+          return;
+        }
         const res = await fetch('http://127.0.0.1:6473/status', {
           method: 'GET',
           mode: 'cors',

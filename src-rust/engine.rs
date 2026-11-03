@@ -139,6 +139,98 @@ impl SelfbotEngine {
             }
         }));
 
+        let eng_weak_dispatch = Arc::downgrade(&engine);
+        *engine.ipc.on_dispatch.lock() = Some(Arc::new(move |evt, data| {
+            if evt != "VOICE_CHANNEL_SELECT" {
+                return;
+            }
+            let Some(eng) = eng_weak_dispatch.upgrade() else {
+                return;
+            };
+            let ch_id = data
+                .get("channel_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            let g_id = data
+                .get("guild_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            {
+                let mut cv = eng.current_voice.write();
+                cv.channel_id = ch_id.clone();
+                if g_id.is_some() {
+                    cv.guild_id = g_id.clone();
+                }
+            }
+
+            if now_ms() < eng.ignore_anti_disconnect_until.load(Ordering::Relaxed) {
+                eng.broadcast_state();
+                return;
+            }
+
+            let (ad_enabled, ad_guild, ad_channel, rejoin_move, delay_ms) = {
+                let mut f = eng.features.write();
+                if f.anti_disconnect.enabled
+                    && f.anti_disconnect.channel_id.is_none()
+                    && ch_id.is_some()
+                {
+                    f.anti_disconnect.channel_id = ch_id.clone();
+                    f.anti_disconnect.guild_id = g_id.clone();
+                }
+                (
+                    f.anti_disconnect.enabled,
+                    f.anti_disconnect.guild_id.clone(),
+                    f.anti_disconnect.channel_id.clone(),
+                    f.anti_disconnect.rejoin_on_move,
+                    f.anti_disconnect.delay_ms.clamp(15, 250),
+                )
+            };
+
+            if ad_enabled {
+                if let Some(target_ch) = ad_channel {
+                    let was_disconnected = ch_id.is_none();
+                    let was_moved = ch_id
+                        .as_ref()
+                        .map(|c| c != &target_ch && rejoin_move)
+                        .unwrap_or(false);
+
+                    if was_disconnected || was_moved {
+                        if let Some(old) = eng.anti_disconnect_timer.lock().take() {
+                            old.abort();
+                        }
+                        let eng_inner = Arc::clone(&eng);
+                        let h = tokio::spawn(async move {
+                            sleep(Duration::from_millis(delay_ms)).await;
+                            let cur_ch = eng_inner.current_voice.read().channel_id.clone();
+                            if cur_ch.as_deref() == Some(target_ch.as_str()) {
+                                return;
+                            }
+                            let ok = eng_inner
+                                .auto_voice_select(ad_guild.as_deref(), Some(&target_ch))
+                                .await;
+                            if ok {
+                                eng_inner.stats.write().anti_disconnect_triggers += 1;
+                                eng_inner.log(
+                                    "voice",
+                                    format!(
+                                        "[ANTI-DISCONNECT IPC] Reconectado instantaneamente em {}",
+                                        eng_inner
+                                            .get_channel_label(ad_guild.as_deref(), Some(&target_ch))
+                                    ),
+                                );
+                                eng_inner.broadcast_state();
+                            }
+                        });
+                        *eng.anti_disconnect_timer.lock() = Some(h);
+                    }
+                }
+            }
+            eng.broadcast_state();
+        }));
+
         engine
     }
 
@@ -2287,9 +2379,9 @@ impl SelfbotEngine {
         start_gateway_loop(Arc::clone(self));
         self.start_watchdog();
 
-        let ipc_clone = Arc::clone(&self.ipc);
+        let eng_ipc = Arc::clone(self);
         tokio::spawn(async move {
-            let _ = ipc_clone.ensure_connected().await;
+            eng_ipc.sync_local_ipc_voice().await;
         });
 
         let eng_clone = Arc::clone(self);
@@ -2298,6 +2390,56 @@ impl SelfbotEngine {
         });
 
         Ok(user)
+    }
+
+    pub async fn sync_local_ipc_voice(&self) -> bool {
+        if !self.ipc.ensure_connected().await {
+            return false;
+        }
+        let _ = self.ipc.subscribe("VOICE_CHANNEL_SELECT", json!({})).await;
+        let res = self
+            .ipc
+            .send_command("GET_SELECTED_VOICE_CHANNEL", json!({}), 2000)
+            .await;
+        if res.ok {
+            if let Some(ref d) = res.data {
+                let cid = d
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string());
+                let gid = d
+                    .get("guild_id")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string());
+                if let Some(ch) = cid {
+                    {
+                        let mut cv = self.current_voice.write();
+                        cv.channel_id = Some(ch.clone());
+                        if gid.is_some() {
+                            cv.guild_id = gid.clone();
+                        }
+                    }
+                    {
+                        let mut vc = self.voice_config.write();
+                        vc.channel_id = Some(ch.clone());
+                        if gid.is_some() {
+                            vc.guild_id = gid.clone();
+                        }
+                    }
+                    {
+                        let mut f = self.features.write();
+                        if f.anti_disconnect.enabled && f.anti_disconnect.channel_id.is_none() {
+                            f.anti_disconnect.channel_id = Some(ch);
+                            f.anti_disconnect.guild_id = gid;
+                        }
+                    }
+                    self.broadcast_state();
+                }
+            }
+        }
+        true
     }
 
     pub fn disconnect(&self, log_disconnect: bool) {
