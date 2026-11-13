@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: var(--bg);
+  --color-foreground: var(--fg);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-fg);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-fg);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-fg);
+}
+
+@layer base {
+  :root {
+    --bg: #f8fafc;
+    --fg: #0f172a;
+    --card: #ffffff;
+    --card-fg: #0f172a;
+    --border: #e2e8f0;
+    --primary: #4f46e5;
+    --primary-fg: #ffffff;
+    --muted: #f1f5f9;
+    --muted-fg: #64748b;
+  }
+
+  .dark {
+    --bg: #0f172a;
+    --fg: #f8fafc;
+    --card: #1e293b;
+    --card-fg: #f8fafc;
+    --border: #334155;
+    --primary: #6366f1;
+    --primary-fg: #ffffff;
+    --muted: #1e293b;
+    --muted-fg: #94a3b8;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--fg);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

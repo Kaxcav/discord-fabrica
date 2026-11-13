@@ -1,0 +1,108 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'windows/src-rust/**'
+      - 'windows/Cargo.toml'
+      - 'windows/Cargo.lock'
+      - '.github/workflows/build-windows.yml'
+  pull_request:
+    paths:
+      - 'windows/src-rust/**'
+      - 'windows/Cargo.toml'
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: windows
+
+jobs:
+  # ----------------------------------------------------------------
+  # Build nativo no Windows Runner (MSVC — melhor compatibilidade)
+  # ----------------------------------------------------------------
+  build-windows-native:
+    name: Build nativo (Windows / MSVC)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Rust stable (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            windows/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-msvc-${{ hashFiles('windows/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-msvc-
+
+      - name: Build release (MSVC)
+        # Remove o config.toml que força gnu para usar MSVC nativo no runner Windows
+        shell: pwsh
+        run: |
+          Remove-Item -Force .cargo\config.toml -ErrorAction SilentlyContinue
+          cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Verificar tamanho dos binarios
+        shell: pwsh
+        run: |
+          $exe1 = Get-Item "target\x86_64-pc-windows-msvc\release\discord-fabrica.exe"
+          $exe2 = Get-Item "target\x86_64-pc-windows-msvc\release\local-bridge.exe"
+          Write-Host "discord-fabrica.exe: $([math]::Round($exe1.Length/1MB, 2)) MB"
+          Write-Host "local-bridge.exe:    $([math]::Round($exe2.Length/1MB, 2)) MB"
+
+      - name: Upload EXEs
+        uses: actions/upload-artifact@v4
+        with:
+          name: discord-fabrica-windows-${{ github.sha }}
+          path: |
+            windows/target/x86_64-pc-windows-msvc/release/discord-fabrica.exe
+            windows/target/x86_64-pc-windows-msvc/release/local-bridge.exe
+          if-no-files-found: error
+          retention-days: 90
+
+  # ----------------------------------------------------------------
+  # Cross-compile Linux → Windows (GNU) — para validar o toolchain
+  # ----------------------------------------------------------------
+  build-cross-gnu:
+    name: Cross-compile Linux → Windows (GNU)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar MinGW + Rust target
+        run: |
+          sudo apt-get install -y mingw-w64
+          rustup target add x86_64-pc-windows-gnu
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            windows/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: linux-gnu-windows-${{ hashFiles('windows/Cargo.lock') }}
+          restore-keys: linux-gnu-windows-
+
+      - name: Build release (GNU cross)
+        run: cargo build --release --target x86_64-pc-windows-gnu
+
+      - name: Upload EXEs (cross GNU)
+        uses: actions/upload-artifact@v4
+        with:
+          name: discord-fabrica-windows-gnu-${{ github.sha }}
+          path: |
+            windows/target/x86_64-pc-windows-gnu/release/discord-fabrica.exe
+            windows/target/x86_64-pc-windows-gnu/release/local-bridge.exe
+          if-no-files-found: error
+          retention-days: 30
