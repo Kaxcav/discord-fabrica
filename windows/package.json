@@ -1,15 +1,22 @@
 {
   "name": "discord-fabrica-windows",
-  "private": false,
-  "version": "0.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
-    "build:cross": "bash build-cross.sh",
-    "build:native": "cargo build --release",
-    "bridge": ".\\target\\x86_64-pc-windows-gnu\\release\\local-bridge.exe",
-    "bridge:native": ".\\target\\release\\local-bridge.exe",
-    "start": ".\\target\\x86_64-pc-windows-gnu\\release\\discord-fabrica.exe",
-    "start:native": ".\\target\\release\\discord-fabrica.exe"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
   },
-  "devDependencies": {}
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-shell": "^2",
+    "react": "^18",
+    "react-dom": "^18"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@vitejs/plugin-react": "^4",
+    "vite": "^5"
+  }
 }
