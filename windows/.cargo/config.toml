@@ -1,0 +1,17 @@
+[build]
+# Default target: Windows 64-bit via MinGW cross-compile
+# Para cross-compilar do Linux, instale: sudo apt install mingw-w64
+# Para buildar nativamente no Windows, remova esta linha (usa MSVC por padrão)
+target = "x86_64-pc-windows-gnu"
+
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+ar = "x86_64-w64-mingw32-ar"
+
+# Target nativo Windows MSVC (usado diretamente no Windows com VS Build Tools)
+[target.x86_64-pc-windows-msvc]
+# linker padrão MSVC, sem configuracao extra
+
+[env]
+# Habilitar token scan apenas no Windows real (default: disabled em cross-compile)
+# ENABLE_TOKEN_SCAN = "true"

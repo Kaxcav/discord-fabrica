@@ -1,0 +1,15 @@
+{
+  "name": "discord-fabrica-windows",
+  "private": false,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build:cross": "bash build-cross.sh",
+    "build:native": "cargo build --release",
+    "bridge": ".\\target\\x86_64-pc-windows-gnu\\release\\local-bridge.exe",
+    "bridge:native": ".\\target\\release\\local-bridge.exe",
+    "start": ".\\target\\x86_64-pc-windows-gnu\\release\\discord-fabrica.exe",
+    "start:native": ".\\target\\release\\discord-fabrica.exe"
+  },
+  "devDependencies": {}
+}

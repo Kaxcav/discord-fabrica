@@ -1,0 +1,49 @@
+[package]
+name = "discord-fabrica"
+version = "2.0.0"
+edition = "2021"
+default-run = "discord-fabrica"
+
+[[bin]]
+name = "discord-fabrica"
+path = "src-rust/main.rs"
+
+[[bin]]
+name = "local-bridge"
+path = "src-rust/bin/local_bridge.rs"
+
+[lib]
+name = "discord_fabrica"
+path = "src-rust/lib.rs"
+
+[dependencies]
+axum = { version = "0.7", features = ["macros", "json"] }
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+dashmap = "6"
+parking_lot = "0.12"
+base64 = "0.22"
+regex = "1"
+rand = "0.8"
+chrono = "0.4"
+aes-gcm = "0.10"
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Security_Cryptography",
+  "Win32_Foundation",
+] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
+codegen-units = 1
